@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Env & secrets
+.env
+
+# Model weights & HF cache (besar)
+models/
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# Data (besar — jangan commit foto & PDF)
+data/raw/
+data/extracted/
+data/masks/
+data/datasets/
+DATA LONG LAT DAN TABEL FOTO.pdf
+*.pdf
+
+# Output
+outputs/
+*.log

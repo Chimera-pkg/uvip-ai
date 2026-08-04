@@ -1,0 +1,13 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+data/raw
+data/extracted
+data/masks
+data/datasets
+*.pdf
+models/hf_cache
+notebooks
+.env

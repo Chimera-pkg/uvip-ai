@@ -1,0 +1,131 @@
+Roadmap langkah-langkah untuk AI engineer UVIP, mulai dari setup environment hingga integrasi pipeline ke FastAPI.
+Yang dibutuhkan sebelum mulai
+
+Hardware
+NVIDIA RTX 4090
+24GB VRAM
+RAM ≥ 32 GB
+SSD ≥ 500 GB
+untuk dataset foto
+Internet stabil
+download model HuggingFace
+Environment
+Python 3.10+
+CUDA 12.x + cuDNN
+PyTorch 2.x
+GPU build
+Docker + NVIDIA toolkit
+Jupyter / VS Code
+Library pip install
+ultralytics
+YOLOv8
+transformers
+SegFormer, DINOv2
+xgboost
+shap
+opencv-python
+scikit-learn, pandas
+fastapi, uvicorn
+Dataset kuesioner persepsi publik (skor Beauty / Safety / Comfort dari responden Kota Malang) harus sudah siap sebelum Step 7. Koordinasi dengan tim surveyor sedini mungkin — ini bottleneck terbesar.
+Langkah-langkah pengerjaan AI
+
+1
+Setup
+Setup environment & verifikasi GPU
+
+Install CUDA, PyTorch, semua library. Jalankan torch.cuda.is_available() untuk pastikan GPU terdeteksi. Buat virtual environment khusus project ini.
+
+CUDA
+PyTorch
+Docker
+1–2 hari
+2
+Phase 1
+Implementasi Privacy Guard (YOLOv8-nano)
+
+Load pretrained YOLOv8-nano. Buat fungsi yang menerima foto, mendeteksi bounding box wajah & plat nomor, lalu apply Gaussian blur. Test dengan foto jalan sample. Output: foto hasil masking.
+
+ultralytics
+cv2.GaussianBlur
+2–3 hari
+3
+Phase 1
+Implementasi Segmentasi (SegFormer-B5)
+
+Load SegFormer-B5 dari HuggingFace. Jalankan inferensi → dapat pixel map per kelas. Dari pixel map, hitung 5 metrik: green_coverage, building_coverage, sky_visibility, walkability_ratio, visual_clutter_index. Simpan output ke database.
+
+transformers
+segmentation_results
+numpy
+3–5 hari
+4
+Phase 2
+Implementasi Feature Extraction (DINOv2 Large)
+
+Load DINOv2 Large dari HuggingFace. Jalankan pada foto → ambil embedding vektor (1024 dimensi). Tidak perlu fine-tuning. Gabungkan embedding ini dengan 5 metrik segmentasi → jadi 1 feature vector per foto untuk input XGBoost.
+
+transformers
+DINOv2
+numpy
+2–3 hari
+5
+Phase 2
+Siapkan dataset training
+
+Untuk setiap foto dalam dataset kuesioner: jalankan Step 2 → 3 → 4, simpan feature vector + label skor (Beauty/Safety/Comfort/UVI dari jawaban responden) ke dalam file CSV atau DataFrame. Ini data training XGBoost.
+
+pandas
+dataset kuesioner
+pipeline batch
+3–5 hari
+6
+Phase 2
+Training XGBoost & evaluasi R²
+
+Train 4 model regresi terpisah: Beauty, Safety, Comfort, UVI. Gunakan K-Fold cross-validation. Pastikan R² ≥ 0.7 pada data validasi. Jika belum mencapai 0.7, coba feature engineering atau tambah data kuesioner.
+
+xgboost
+scikit-learn
+KFold
+R² ≥ 0.7
+1–2 minggu
+7
+Phase 2
+Implementasi SHAP explainability
+
+Buat SHAP TreeExplainer dari model XGBoost yang sudah jadi. Untuk setiap prediksi, hitung SHAP values → simpan ke tabel shap_values. Output harus berupa Faktor Positif / Negatif dengan label bahasa Indonesia.
+
+shap
+TreeExplainer
+shap_values table
+2–3 hari
+8
+Integrasi
+Wrap jadi FastAPI pipeline endpoint
+
+Buat satu endpoint POST /ai/process yang menjalankan Step 2→3→4→6→7 secara berurutan. Output: segmentation mask URL + semua skor + SHAP values. Endpoint ini yang dipanggil oleh WebSocket handler saat foto masuk dari mobile.
+
+fastapi
+uvicorn
+model.predict()
+3–5 hari
+9
+Integrasi
+Uji latensi end-to-end & optimasi
+
+Ukur waktu dari foto masuk hingga respons keluar. Target: < 700ms. Jika lebih lambat: cek bottleneck (biasanya DINOv2), coba batch inference, atau jalankan model dengan torch.compile() untuk percepat.
+
+profiling
+torch.compile
+CUDA optimization
+2–3 hari
+10
+Integrasi
+Simpan model ke model_registry & deploy Docker
+
+Simpan semua model (YOLOv8, SegFormer, XGBoost) ke file + catat versi, R², dan tanggal training ke tabel model_registry. Containerize pipeline dengan Docker + CUDA base image.
+
+model.save()
+model_registry
+Docker
+2–3 hari

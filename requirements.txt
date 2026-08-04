@@ -1,0 +1,35 @@
+# ============================================================
+# UVIP-AI dependencies
+# ------------------------------------------------------------
+# PyTorch TIDAK dimasukkan di sini karena harus dipilih sesuai
+# CUDA. Install torch DULU (lihat README / scripts/install_torch),
+# lalu: pip install -r requirements.txt
+# ============================================================
+
+# --- Deteksi & privacy (Step 2) ---
+ultralytics>=8.2.0          # YOLOv8-nano untuk deteksi wajah & plat
+opencv-python>=4.9.0        # Gaussian blur, I/O gambar
+
+# --- Segmentasi & feature extraction (Step 3-4) ---
+transformers>=4.44.0        # SegFormer-B5, DINOv2 Large
+timm>=1.0.0                 # backbone tambahan bila diperlukan
+pillow>=10.0.0
+
+# --- Training & explainability (Step 6-7) ---
+xgboost>=2.1.0
+scikit-learn>=1.4.0
+shap>=0.46.0
+pandas>=2.2.0
+numpy>=1.26.0
+
+# --- API (Step 8) ---
+fastapi>=0.112.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9     # multipart form untuk upload foto
+pydantic-settings>=2.4.0
+httpx>=0.27.0               # client untuk seed data ke backend
+
+# --- Utilitas dataset (ekstrak foto dari PDF) ---
+pypdf>=4.3.0
+tqdm>=4.66.0
+python-dotenv>=1.0.0
