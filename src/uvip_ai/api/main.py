@@ -60,35 +60,34 @@ def save_upload(file: UploadFile) -> Path:
 
 def post_process(path: Path) -> dict:
     """Run full pipeline AI pada foto → return unified result."""
-    # Step A: Privacy Guard
+    # Step A: Privacy Guard — PrivacyGuard tidak punya low_vram_mode, gunakan default
     from uvip_ai.privacy.guard import PrivacyGuard
-    guard = PrivacyGuard(low_vram_mode=True)
-    masked_img, boxes = guard.process(str(path))
+    guard = PrivacyGuard()
+    guard_result = guard.process_image(str(path))
+    masked_img = guard_result["blurred_image"]   # np.ndarray BGR
+    boxes = guard_result.get("detections", [])
 
     # Step B: Segmentation
     from uvip_ai.segmentation.segformer import SegformerB5
     seg = SegformerB5(low_vram_mode=True)
-    seg_res = seg.infer(masked_img if hasattr(masked_img, 'convert') else path)
+    seg_res = seg.infer(masked_img)
     metrics = seg_res["metrics"]
 
     # Step C: Feature extraction
     from uvip_ai.features.dinov2 import Dinov2Extractor
     feat_model = Dinov2Extractor(low_vram_mode=True)
-    emb = feat_model.extract(masked_img if hasattr(masked_img, 'convert') else path)
+    emb = feat_model.extract(str(path))
 
     # Step D: XGBoost prediction (stub: use dummy model if not trained yet)
     # TODO: load model & predict
     predictions = {"beauty_score": 6.0, "safety_score": 6.5, "comfort_score": 6.2, "uvi_score": 6.3}
 
-    # Step E: SHAP explainability
-    from uvip_ai.explain.shap_explain import ShapExplainer
-    # dummy features
-    x = np.zeros(1029)
-    explainer = ShapExplainer(None, [])  # will fail if no model; skip for stub
+    # Step E: SHAP explainability — skip jika model belum ada
     explanations = []
 
     # Cleanup
-    guard.free_memory(); seg.free_memory(); feat_model.free_memory()
+    seg.free_memory()
+    feat_model.free_memory()
 
     # Save masked image
     out_dir = Path("uploads/masks")
