@@ -1,0 +1,23 @@
+{
+  "image": "data\\extracted\\photos\\KAYUTANGAN\\KAYUTANGAN_ST-01.jpg",
+  "image_size": "1143x857",
+  "privacy": {
+    "detections_count": 0,
+    "detections": []
+  },
+  "segmentation_metrics": {
+    "green_coverage_pct": 23.9456,
+    "building_coverage_pct": 29.8542,
+    "walkability_ratio": 0.1365,
+    "visual_clutter_index": 0.0,
+    "sky_visibility_pct": 0.0
+  },
+  "embedding_dimension": 1024,
+  "predictions": {
+    "beauty": 6.5918399999999995,
+    "safety": 4.6825,
+    "comfort": 7.873472,
+    "uvi": 6.382604
+  },
+  "note": "Predictions are MOCK (not from trained model)"
+}
