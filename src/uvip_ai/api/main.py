@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import cv2
 import fastapi
 from fastapi import File, Form, UploadFile, HTTPException
@@ -32,10 +33,10 @@ async def health():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
 
-class ProcessRequest(fastapi.BaseModel):
+class ProcessRequest(BaseModel):
     """Payload request (jika bukan multipart)."""
-    latitude: float | None = None
-    longitude: float | None = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     is_offline_sync: bool = False
 
 
