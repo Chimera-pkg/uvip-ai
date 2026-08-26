@@ -12,8 +12,10 @@ Target latency < 700ms (Step 9).
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -24,6 +26,14 @@ import fastapi
 from fastapi import File, Form, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+# Setup logging — tampil di journalctl -u uvip -f
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("uvip_ai")
 
 app = fastapi.FastAPI(title="UVIP-AI API", version="0.1.0")
 
@@ -103,12 +113,23 @@ def post_process(path: Path) -> dict:
 @app.post("/ai/process")
 async def process_photo(file: UploadFile = File(...)):
     """Process foto jalan → return masking, segmentasi, prediksi, explainability."""
+    start = time.time()
+    logger.info("📥 Foto masuk: %s (size: %s)", file.filename, file.size)
     try:
         path = save_upload(file)
+        logger.info("💾 Foto disimpan: %s", path)
+
+        logger.info("⚙️  Memproses: %s ...", file.filename)
         result = post_process(path)
+
+        elapsed = (time.time() - start) * 1000
+        logger.info("✅ Selesai: %s — %.0fms", file.filename, elapsed)
+
         path.unlink(missing_ok=True)
         return JSONResponse(result)
     except Exception as e:
+        elapsed = (time.time() - start) * 1000
+        logger.error("❌ Gagal: %s — %s (%.0fms)", file.filename, str(e), elapsed)
         raise HTTPException(status_code=500, detail=str(e))
 
 
