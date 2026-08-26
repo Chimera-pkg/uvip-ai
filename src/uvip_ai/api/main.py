@@ -16,11 +16,13 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import fastapi
 from fastapi import File, Form, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 app = fastapi.FastAPI(title="UVIP-AI API", version="0.1.0")
 
