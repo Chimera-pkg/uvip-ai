@@ -21,11 +21,20 @@ models/
 # Data (besar — jangan commit foto & PDF)
 data/raw/
 data/extracted/
+data/extracted.rar
 data/masks/
 data/datasets/
 DATA LONG LAT DAN TABEL FOTO.pdf
 *.pdf
+*.rar
+*.zip
 
-# Output
+# Output & demo
 outputs/
+demo_outputs/
+test_outputs/
 *.log
+
+# Large archives
+trained_models.zip
+data/training/
