@@ -1,0 +1,1191 @@
+<title>UVIP — Dokumen Teknis Implementasi & Rekomendasi Server</title>
+<style>
+  /* ── Tokens ── */
+  :root {
+    --bg: #F7F8FA;
+    --surface: #FFFFFF;
+    --surface-2: #F0F2F6;
+    --border: #E2E6ED;
+    --text: #1A1D23;
+    --text-2: #4A5060;
+    --text-3: #8A90A0;
+    --accent: #2563EB;
+    --accent-light: #EFF4FF;
+    --accent-dark: #1D4ED8;
+    --green: #16A34A;
+    --green-light: #DCFCE7;
+    --orange: #EA580C;
+    --orange-light: #FFF1E6;
+    --red: #DC2626;
+    --red-light: #FEF2F2;
+    --yellow: #CA8A04;
+    --yellow-light: #FEFCE8;
+    --code-bg: #1E2433;
+    --code-text: #E2E8F4;
+    --radius: 10px;
+    --shadow: 0 1px 4px rgba(0,0,0,0.07), 0 4px 16px rgba(0,0,0,0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111318;
+      --surface: #1A1D24;
+      --surface-2: #21252F;
+      --border: #2C3140;
+      --text: #E8EBF2;
+      --text-2: #9AA0B4;
+      --text-3: #5A6078;
+      --accent: #4B82F5;
+      --accent-light: #1A2540;
+      --accent-dark: #6B9BFF;
+      --green: #22C55E;
+      --green-light: #0D2818;
+      --orange: #FB923C;
+      --orange-light: #2A1A0A;
+      --red: #F87171;
+      --red-light: #2A0E0E;
+      --yellow: #FACC15;
+      --yellow-light: #2A2200;
+      --code-bg: #0D1017;
+      --code-text: #CBD5E8;
+      --shadow: 0 1px 4px rgba(0,0,0,0.3), 0 4px 16px rgba(0,0,0,0.2);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #111318;
+    --surface: #1A1D24;
+    --surface-2: #21252F;
+    --border: #2C3140;
+    --text: #E8EBF2;
+    --text-2: #9AA0B4;
+    --text-3: #5A6078;
+    --accent: #4B82F5;
+    --accent-light: #1A2540;
+    --accent-dark: #6B9BFF;
+    --green: #22C55E;
+    --green-light: #0D2818;
+    --orange: #FB923C;
+    --orange-light: #2A1A0A;
+    --red: #F87171;
+    --red-light: #2A0E0E;
+    --yellow: #FACC15;
+    --yellow-light: #2A2200;
+    --code-bg: #0D1017;
+    --code-text: #CBD5E8;
+    --shadow: 0 1px 4px rgba(0,0,0,0.3), 0 4px 16px rgba(0,0,0,0.2);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+    padding: 0 0 80px;
+  }
+
+  /* ── Header ── */
+  .doc-header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 40px 0 32px;
+    margin-bottom: 40px;
+  }
+  .doc-header .inner {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+  .doc-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    font-size: 12px;
+    color: var(--text-3);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .doc-meta .tag {
+    background: var(--accent-light);
+    color: var(--accent);
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+  h1 {
+    font-size: 30px;
+    font-weight: 800;
+    color: var(--text);
+    line-height: 1.2;
+    text-wrap: balance;
+    margin-bottom: 12px;
+  }
+  .doc-subtitle {
+    color: var(--text-2);
+    font-size: 15px;
+    max-width: 600px;
+  }
+
+  /* ── Layout ── */
+  .content {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 0 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+  }
+
+  /* ── Section ── */
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .section-header {
+    padding: 20px 28px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .section-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+    flex-shrink: 0;
+  }
+  .icon-blue { background: var(--accent-light); }
+  .icon-green { background: var(--green-light); }
+  .icon-orange { background: var(--orange-light); }
+  .icon-red { background: var(--red-light); }
+  .icon-yellow { background: var(--yellow-light); }
+
+  .section-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .section-desc {
+    font-size: 13px;
+    color: var(--text-3);
+    margin-top: 2px;
+  }
+  .section-body {
+    padding: 24px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* ── Step ── */
+  .step-list {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+  .step {
+    display: flex;
+    gap: 16px;
+  }
+  .step-num {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    font-size: 12px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .step-content { flex: 1; min-width: 0; }
+  .step-title {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+  .step-body {
+    color: var(--text-2);
+    font-size: 14px;
+    line-height: 1.65;
+  }
+
+  /* ── Code ── */
+  .code-block {
+    background: var(--code-bg);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 12px;
+  }
+  .code-label {
+    padding: 8px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #6B7A9E;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .code-label .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #3B4563;
+  }
+  pre {
+    padding: 16px 18px;
+    overflow-x: auto;
+    color: var(--code-text);
+    font-size: 13px;
+    line-height: 1.7;
+    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+  }
+  .kw { color: #7C9EFF; }
+  .fn { color: #7DCFBA; }
+  .st { color: #9ECE9E; }
+  .cm { color: #5A6478; font-style: italic; }
+  .nu { color: #FF9E64; }
+  .tp { color: #E0AF68; }
+
+  /* ── Diagram ── */
+  .flow-diagram {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 4px 0;
+  }
+  .flow-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .flow-box {
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1.5px solid;
+    white-space: nowrap;
+  }
+  .flow-mobile { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+  .flow-backend { background: var(--green-light); border-color: var(--green); color: var(--green); }
+  .flow-ai { background: var(--orange-light); border-color: var(--orange); color: var(--orange); }
+  .flow-db { background: var(--surface-2); border-color: var(--border); color: var(--text-2); }
+  .flow-arrow {
+    color: var(--text-3);
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .flow-note {
+    font-size: 12px;
+    color: var(--text-3);
+    margin-left: 4px;
+    font-style: italic;
+  }
+  .flow-indent {
+    margin-left: 24px;
+    border-left: 2px solid var(--border);
+    padding-left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .flow-sub {
+    font-size: 12px;
+    color: var(--text-2);
+    padding: 4px 12px;
+    background: var(--surface-2);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    width: fit-content;
+  }
+
+  /* ── Status badge ── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .badge-done { background: var(--green-light); color: var(--green); }
+  .badge-todo { background: var(--orange-light); color: var(--orange); }
+  .badge-partial { background: var(--yellow-light); color: var(--yellow); }
+
+  /* ── Table ── */
+  .table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th {
+    background: var(--surface-2);
+    padding: 11px 16px;
+    text-align: left;
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 11px 16px;
+    color: var(--text-2);
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface-2); }
+  td strong { color: var(--text); font-weight: 700; }
+  .price { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); }
+  .rec-tag {
+    background: var(--accent); color: white;
+    font-size: 10px; font-weight: 800; padding: 2px 7px;
+    border-radius: 4px; letter-spacing: 0.05em;
+    vertical-align: middle; margin-left: 6px;
+  }
+
+  /* ── Alert ── */
+  .alert {
+    padding: 14px 18px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    line-height: 1.6;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .alert-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .alert-warn { background: var(--yellow-light); border-left: 3px solid var(--yellow); color: var(--text-2); }
+  .alert-info { background: var(--accent-light); border-left: 3px solid var(--accent); color: var(--text-2); }
+  .alert-ok { background: var(--green-light); border-left: 3px solid var(--green); color: var(--text-2); }
+  .alert strong { color: var(--text); }
+
+  /* ── Checklist ── */
+  .checklist {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .check-item {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 14px;
+    color: var(--text-2);
+  }
+  .check-box {
+    width: 18px; height: 18px;
+    border-radius: 5px;
+    border: 2px solid;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; margin-top: 2px;
+    font-size: 10px;
+  }
+  .check-done { border-color: var(--green); background: var(--green-light); color: var(--green); }
+  .check-todo { border-color: var(--border); }
+
+  /* ── Divider ── */
+  .divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* ── Server card ── */
+  .server-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+  }
+  .server-card {
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+  }
+  .server-card.recommended {
+    border-color: var(--accent);
+    background: var(--accent-light);
+  }
+  .server-name { font-weight: 800; font-size: 15px; color: var(--text); }
+  .server-spec { font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
+  .server-price-row {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .server-price-main { font-size: 22px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+  .server-price-period { font-size: 12px; color: var(--text-3); }
+  .server-total { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+  .server-note { font-size: 12px; color: var(--text-2); border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
+  .server-best {
+    position: absolute; top: -11px; left: 16px;
+    background: var(--accent); color: white;
+    font-size: 10px; font-weight: 800; padding: 3px 10px; border-radius: 20px;
+    letter-spacing: 0.05em;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 600px) {
+    .doc-header .inner, .content { padding: 0 16px; }
+    h1 { font-size: 22px; }
+    .section-body { padding: 18px 16px; }
+    .section-header { padding: 16px; }
+    pre { font-size: 12px; }
+  }
+</style>
+
+<!-- Header -->
+<div class="doc-header">
+  <div class="inner">
+    <div class="doc-meta">
+      <span class="tag">INTERNAL</span>
+      <span>UVIP · Wolftagon · Agustus 2026</span>
+    </div>
+    <h1>Implementasi Realtime Detection & Segmentasi AI</h1>
+    <p class="doc-subtitle">Panduan teknis step-by-step: alur kamera → detection → segmentasi → hasil, serta rekomendasi server untuk budget minimum 3 bulan.</p>
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- Alur Sistem -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-icon icon-blue">🗺️</div>
+      <div>
+        <div class="section-title">Alur Sistem yang Diinginkan</div>
+        <div class="section-desc">Dari kamera aktif hingga hasil segmentasi tampil di layar</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="flow-diagram">
+        <div class="flow-row">
+          <div class="flow-box flow-mobile">📱 Flutter (AiCam)</div>
+          <div class="flow-arrow">→</div>
+          <span class="flow-note">Kamera aktif, stream frame</span>
+        </div>
+        <div class="flow-indent">
+          <div class="flow-sub">🔴 REALTIME on-device: ML Kit Image Labeling → label "Building", "Road", "Sky", "Tree" muncul di layar sebagai bounding box</div>
+          <div class="flow-sub">📸 User jepret foto / stop video</div>
+        </div>
+        <div class="flow-row" style="margin-top:8px">
+          <div class="flow-box flow-mobile">📱 Flutter</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-box flow-backend">🖥 backend-uvip :8000</div>
+          <span class="flow-note">POST /street-photos (upload file)</span>
+        </div>
+        <div class="flow-indent">
+          <div class="flow-sub">Backend simpan foto ke disk → simpan record ke PostgreSQL → trigger async ke uvip-ai</div>
+        </div>
+        <div class="flow-row" style="margin-top:8px">
+          <div class="flow-box flow-backend">🖥 backend-uvip</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-box flow-ai">🤖 uvip-ai :8001</div>
+          <span class="flow-note">POST /ai/process (background)</span>
+        </div>
+        <div class="flow-indent">
+          <div class="flow-sub">1. YOLOv8n → blur wajah & plat nomor</div>
+          <div class="flow-sub">2. SegFormer-B5 → 5 metrik urban</div>
+          <div class="flow-sub">3. DINOv2-Large → feature extraction ⚠️ (ganti jika RAM terbatas)</div>
+          <div class="flow-sub">4. Prediksi → Beauty / Safety / Comfort / UVI</div>
+          <div class="flow-sub">5. SHAP → faktor pendorong</div>
+        </div>
+        <div class="flow-row" style="margin-top:8px">
+          <div class="flow-box flow-ai">🤖 uvip-ai</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-box flow-backend">🖥 backend-uvip</div>
+          <span class="flow-note">POST /segmentation-results (simpan hasil)</span>
+        </div>
+        <div class="flow-row" style="margin-top:8px">
+          <div class="flow-box flow-mobile">📱 Flutter</div>
+          <div class="flow-arrow">↔</div>
+          <div class="flow-box flow-backend">🖥 backend-uvip</div>
+          <span class="flow-note">Polling GET setiap 2 detik → tampil hasil</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status Komponen -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-icon icon-yellow">📋</div>
+      <div>
+        <div class="section-title">Status Komponen Saat Ini</div>
+        <div class="section-desc">Yang sudah ada vs yang perlu dikerjakan</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Komponen</th>
+              <th>File</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Live camera stream</strong></td><td>aicam_screen.dart</td><td><span class="badge badge-done">✓ Sudah ada</span></td></tr>
+            <tr><td><strong>Bounding box widget</strong></td><td>object_detector_box.dart</td><td><span class="badge badge-done">✓ Sudah ada</span></td></tr>
+            <tr><td><strong>ML Kit detection</strong></td><td>aicam_provider.dart</td><td><span class="badge badge-partial">⚠ Perlu ganti mode ke ImageLabeler</span></td></tr>
+            <tr><td><strong>Upload foto ke backend</strong></td><td>upload_provider.dart</td><td><span class="badge badge-done">✓ Sudah ada</span></td></tr>
+            <tr><td><strong>Backend simpan foto</strong></td><td>street_photos.py</td><td><span class="badge badge-done">✓ Sudah ada</span></td></tr>
+            <tr><td><strong>Backend trigger uvip-ai</strong></td><td>street_photos.py</td><td><span class="badge badge-todo">✗ Belum ada</span></td></tr>
+            <tr><td><strong>uvip-ai callback ke backend</strong></td><td>uvip-ai/api/main.py</td><td><span class="badge badge-todo">✗ Belum ada</span></td></tr>
+            <tr><td><strong>Segmentation result (real)</strong></td><td>segmentation_results.py</td><td><span class="badge badge-partial">⚠ Router ada, data masih dummy</span></td></tr>
+            <tr><td><strong>Flutter polling & tampil hasil</strong></td><td>result_provider.dart</td><td><span class="badge badge-todo">✗ Belum ada</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 1: Flutter ML Kit -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-icon icon-blue">📱</div>
+      <div>
+        <div class="section-title">Step 1 — Flutter: Ganti ML Kit ke Image Labeling</div>
+        <div class="section-desc">aicam_provider.dart — ganti ObjectDetector ke ImageLabeler untuk label urban</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="step-body">
+        ML Kit <strong>ObjectDetector</strong> yang sekarang dipakai hanya detect objek umum. Ganti ke <strong>ImageLabeler</strong> yang sudah built-in di package <code>google_mlkit_image_labeling</code> — labelnya sudah mencakup <em>Building, Road, Sky, Tree, Vehicle, Sidewalk</em> tanpa tambah dependency baru.
+      </div>
+
+      <div class="alert alert-info">
+        <div class="alert-icon">ℹ️</div>
+        <div>Package <code>google_mlkit_image_labeling</code> sudah include di ML Kit bundle yang ada. Tidak perlu tambah <code>pubspec.yaml</code> baru jika sudah ada <code>google_mlkit_object_detection</code>.</div>
+      </div>
+
+      <div class="code-block">
+        <div class="code-label"><span class="dot"></span>pubspec.yaml — pastikan ada</div>
+        <pre><span class="st">dependencies:</span>
+  google_mlkit_image_labeling: ^0.13.0   <span class="cm"># ganti dari object_detection</span>
+  camera: ^0.11.0
+  permission_handler: ^11.0.0</pre>
+      </div>
+
+      <div class="code-block">
+        <div class="code-label"><span class="dot"></span>lib/providers/aicam_provider.dart — ganti implementasi</div>
+        <pre><span class="kw">import</span> <span class="st">'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart'</span>;
+
+<span class="kw">class</span> <span class="tp">AiCamProvider</span> <span class="kw">with</span> <span class="tp">ChangeNotifier</span> {
+  <span class="tp">ImageLabeler</span>? _labeler;
+  <span class="tp">List</span>&lt;<span class="tp">DetectedLabel</span>&gt; _labels = [];
+  <span class="kw">bool</span> _isBusy = <span class="kw">false</span>;
+
+  <span class="cm">// Label urban yang ingin ditampilkan sebagai bounding area</span>
+  <span class="kw">static const</span> _urbanLabels = {
+    <span class="st">'Building'</span>, <span class="st">'Road'</span>, <span class="st">'Sky'</span>, <span class="st">'Tree'</span>,
+    <span class="st">'Sidewalk'</span>, <span class="st">'Vehicle'</span>, <span class="st">'Wall'</span>, <span class="st">'Vegetation'</span>
+  };
+
+  <span class="kw">void</span> <span class="fn">initLabeler</span>() {
+    _labeler = <span class="tp">ImageLabeler</span>(
+      options: <span class="tp">ImageLabelerOptions</span>(confidenceThreshold: <span class="nu">0.55</span>),
+    );
+  }
+
+  <span class="cm">/// Dipanggil dari startImageStream di AiCamScreen</span>
+  <span class="kw">Future</span>&lt;<span class="kw">void</span>&gt; <span class="fn">processFrame</span>(<span class="tp">CameraImage</span> image, <span class="tp">InputImageRotation</span> rotation) <span class="kw">async</span> {
+    <span class="kw">if</span> (_isBusy || _labeler == <span class="kw">null</span>) <span class="kw">return</span>;
+    _isBusy = <span class="kw">true</span>;
+
+    <span class="kw">try</span> {
+      <span class="kw">final</span> inputImage = <span class="tp">InputImage</span>.fromBytes(
+        bytes: image.planes[<span class="nu">0</span>].bytes,
+        metadata: <span class="tp">InputImageMetadata</span>(
+          size: <span class="tp">Size</span>(image.width.toDouble(), image.height.toDouble()),
+          rotation: rotation,
+          format: <span class="tp">InputImageFormat</span>.nv21,
+          bytesPerRow: image.planes[<span class="nu">0</span>].bytesPerRow,
+        ),
+      );
+
+      <span class="kw">final</span> results = <span class="kw">await</span> _labeler!.processImage(inputImage);
+
+      <span class="cm">// Filter hanya label urban yang relevan</span>
+      _labels = results
+          .where((l) => _urbanLabels.contains(l.label) && l.confidence > <span class="nu">0.55</span>)
+          .toList();
+
+      notifyListeners();
+    } <span class="kw">finally</span> {
+      _isBusy = <span class="kw">false</span>;
+    }
+  }
+
+  <span class="tp">List</span>&lt;<span class="tp">DetectedLabel</span>&gt; <span class="kw">get</span> labels => _labels;
+
+  <span class="kw">void</span> <span class="fn">dispose</span>() {
+    _labeler?.close();
+    <span class="kw">super</span>.dispose();
+  }
+}</pre>
+      </div>
+
+      <div class="code-block">
+        <div class="code-label"><span class="dot"></span>lib/screens/aicam/aicam_screen.dart — tampilkan label sebagai overlay chips</div>
+        <pre><span class="cm">// Di dalam Stack di atas CameraPreview, tambahkan:</span>
+<span class="tp">Consumer</span>&lt;<span class="tp">AiCamProvider</span>&gt;(
+  builder: (context, provider, _) {
+    <span class="kw">return</span> <span class="tp">Positioned</span>(
+      bottom: <span class="nu">120</span>,
+      left: <span class="nu">12</span>,
+      right: <span class="nu">12</span>,
+      child: <span class="tp">Wrap</span>(
+        spacing: <span class="nu">8</span>,
+        runSpacing: <span class="nu">6</span>,
+        children: provider.labels.map((label) {
+          <span class="kw">return</span> <span class="tp">Container</span>(
+            padding: <span class="kw">const</span> <span class="tp">EdgeInsets</span>.symmetric(horizontal: <span class="nu">10</span>, vertical: <span class="nu">5</span>),
+            decoration: <span class="tp">BoxDecoration</span>(
+              color: <span class="tp">Colors</span>.black.withOpacity(<span class="nu">0.65</span>),
+              borderRadius: <span class="tp">BorderRadius</span>.circular(<span class="nu">20</span>),
+              border: <span class="tp">Border</span>.all(color: <span class="tp">Colors</span>.white24),
+            ),
+            child: <span class="tp">Text</span>(
+              <span class="st">'${label.label} ${(label.confidence * 100).toInt()}%'</span>,
+              style: <span class="kw">const</span> <span class="tp">TextStyle</span>(
+                color: <span class="tp">Colors</span>.white,
+                fontSize: <span class="nu">12</span>,
+                fontWeight: <span class="tp">FontWeight</span>.w700,
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  },
+),</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 2: Backend trigger AI -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-icon icon-green">🖥️</div>
+      <div>
+        <div class="section-title">Step 2 — Backend: Trigger ke uvip-ai Setelah Upload</div>
+        <div class="section-desc">street_photos.py — tambah background task trigger setelah foto tersimpan</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="alert alert-warn">
+        <div class="alert-icon">⚠️</div>
+        <div>Trigger ke uvip-ai harus <strong>async / background task</strong> — jangan blocking. Kalau blocking, response upload foto ke Flutter akan timeout karena uvip-ai butuh beberapa detik.</div>
+      </div>
+
+      <div class="code-block">
+        <div class="code-label"><span class="dot"></span>app/core/config.py — tambah setting URL uvip-ai</div>
+        <pre><span class="kw">class</span> <span class="tp">Settings</span>(<span class="tp">BaseSettings</span>):
+    DATABASE_URL: <span class="kw">str</span>
+    SECRET_KEY: <span class="kw">str</span>
+    ALGORITHM: <span class="kw">str</span> = <span class="st">"HS256"</span>
+    ACCESS_TOKEN_EXPIRE_MINUTES: <span class="kw">int</span> = <span class="nu">120</span>
+    <span class="cm"># Tambahkan ini:</span>
+    UVIP_AI_URL: <span class="kw">str</span> = <span class="st">"http://127.0.0.1:8001"</span>
+    UVIP_AI_TOKEN: <span class="kw">str</span> = <span class="st">""</span>  <span class="cm"># internal token jika perlu auth</span>
+
+    <span class="kw">class</span> <span class="tp">Config</span>:
+        env_file = <span class="st">".env"</span></pre>
+      </div>
+
+      <div class="code-block">
+        <div class="code-label"><span class="dot"></span>app/routers/street_photos.py — tambah trigger setelah simpan foto</div>
+        <pre><span class="kw">import</span> asyncio
+<span class="kw">import</span> httpx
+<span class="kw">from</span> app.core.config <span class="kw">import</span> settings
+
+<span class="kw">async def</span> <span class="fn">_trigger_ai_processing</span>(photo_id: <span class="kw">str</span>, file_path: <span class="kw">str</span>):
+    <span class="st">"""Fire-and-forget: kirim foto ke uvip-ai untuk diproses."""</span>
+    <span class="kw">try</span>:
+        <span class="kw">async with</span> httpx.<span class="tp">AsyncClient</span>(timeout=<span class="nu">120.0</span>) <span class="kw">as</span> client:
+            <span class="kw">with</span> open(file_path, <span class="st">"rb"</span>) <span class="kw">as</span> f:
+                <span class="kw">await</span> client.post(
+                    f<span class="st">"{settings.UVIP_AI_URL}/ai/process"</span>,
+                    files={<span class="st">"file"</span>: (Path(file_path).name, f, <span class="st">"image/jpeg"</span>)},
+                    data={<span class="st">"photo_id"</span>: photo_id},
+                    headers={<span class="st">"X-Internal-Token"</span>: settings.UVIP_AI_TOKEN},
+                )
+    <span class="kw">except</span> <span class="tp">Exception</span> <span class="kw">as</span> e:
+        logger.warning(<span class="st">"AI trigger gagal photo_id=%s: %s"</span>, photo_id, e)
+        <span class="cm"># Tidak raise — upload tetap sukses, AI proses belakangan</span>
+
+<span class="cm"># Di dalam endpoint upload foto, setelah db.commit():</span>
+@router.post(<span class="st">"/"</span>, ...)
+<span class="kw">async def</span> <span class="fn">upload_photo</span>(
+    ...,
+    background_tasks: <span class="tp">BackgroundTasks</span>,  <span class="cm"># tambah parameter ini</span>
+):
+    <span class="cm"># ... simpan file dan DB seperti sekarang ...</span>
+    db.commit()
+    db.refresh(photo)
+
+    <span class="cm"># Trigger AI di background — tidak blocking ke client</span>
+    background_tasks.add_task(
+        _trigger_ai_processing,
+        str(photo.id),
+        photo.file_path
+    )
+
+    <span class="kw">return</span> photo  <span class="cm"># langsung return, AI jalan di belakang</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 3: uvip-ai callback -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-icon icon-orange">🤖</div>
+      <div>
+        <div class="section-title">Step 3 — uvip-ai: Callback Hasil ke Backend</div>
+        <div class="section-desc">uvip-ai/src/uvip_ai/api/main.py — setelah proses selesai, POST hasil ke backend</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="alert alert-warn">
+        <div class="alert-icon">⚠️</div>
+        <div><strong>Soal DINOv2-Large di VPS tanpa GPU:</strong> DINOv2-Large butuh ~4GB RAM dan sangat lambat di CPU. Sementara ganti ke <strong>DINOv2-Small</strong> (<code>facebook/dinov2-small</code>) atau skip feature extraction sama sekali — SegFormer sudah cukup untuk 5 metrik utama.</div>
+      </div>
+
+      <div class="code-block">
+        <div class="code-label"><span class="dot"></span>uvip-ai/src/uvip_ai/api/main.py — tambah photo_id form field + callback</div>
+        <pre><span class="kw">from</span> fastapi <span class="kw">import</span> File, Form, UploadFile, HTTPException, BackgroundTasks
+<span class="kw">import</span> httpx
+<span class="kw">from</span> uvip_ai.config <span class="kw">import</span> settings
+
+@app.post(<span class="st">"/ai/process"</span>)
+<span class="kw">async def</span> <span class="fn">process_image</span>(
+    file: <span class="tp">UploadFile</span> = File(...),
+    photo_id: <span class="kw">str</span> = Form(<span class="st">""</span>),  <span class="cm"># ID foto dari backend</span>
+    background_tasks: <span class="tp">BackgroundTasks</span> = <span class="tp">BackgroundTasks</span>(),
+):
+    start = time.time()
+    path = <span class="tp">Path</span>(<span class="st">f"tmp_{photo_id}_{file.filename}"</span>)
+
+    <span class="kw">try</span>:
+        <span class="cm"># Simpan file sementara</span>
+        <span class="kw">with</span> open(path, <span class="st">"wb"</span>) <span class="kw">as</span> buf:
+            shutil.copyfileobj(file.file, buf)
+
+        img = cv2.imread(<span class="kw">str</span>(path))
+
+        <span class="cm"># 1. Privacy masking</span>
+        masked = privacy_guard.process_image(img)
+
+        <span class="cm"># 2. Segmentasi → 5 metrik</span>
+        seg_result = segformer.infer(masked[<span class="st">"masked_image"</span>])
+        metrics = seg_result[<span class="st">"metrics"</span>]
+
+        <span class="cm"># 3. Prediksi skor (skip DINOv2 sementara jika RAM terbatas)</span>
+        scores = predictor.predict(metrics)  <span class="cm"># input = 5 metrik saja</span>
+
+        result = {
+            <span class="st">"photo_id"</span>: photo_id,
+            <span class="st">"green_coverage_pct"</span>: metrics[<span class="st">"green_coverage_pct"</span>],
+            <span class="st">"building_coverage_pct"</span>: metrics[<span class="st">"building_coverage_pct"</span>],
+            <span class="st">"walkability_ratio"</span>: metrics[<span class="st">"walkability_ratio"</span>],
+            <span class="st">"visual_clutter_index"</span>: metrics[<span class="st">"visual_clutter_index"</span>],
+            <span class="st">"sky_visibility_pct"</span>: metrics[<span class="st">"sky_visibility_pct"</span>],
+            <span class="st">"beauty_score"</span>: scores[<span class="st">"beauty"</span>],
+            <span class="st">"safety_score"</span>: scores[<span class="st">"safety"</span>],
+            <span class="st">"comfort_score"</span>: scores[<span class="st">"comfort"</span>],
+            <span class="st">"uvi_score"</span>: scores[<span class="st">"uvi"</span>],
+        }
+
+        <span class="cm"># 4. Callback ke backend-uvip (background, tidak blocking)</span>
+        <span class="kw">if</span> photo_id:
+            background_tasks.add_task(_post_result_to_backend, result)
+
+        elapsed = (time.time() - start) * <span class="nu">1000</span>
+        logger.info(<span class="st">"✅ %s — %.0fms"</span>, photo_id, elapsed)
+        <span class="kw">return</span> <span class="tp">JSONResponse</span>(result)
+
+    <span class="kw">finally</span>:
+        path.unlink(missing_ok=<span class="kw">True</span>)
+
+
+<span class="kw">async def</span> <span class="fn">_post_result_to_backend</span>(result: <span class="kw">dict</span>):
+    <span class="st">"""Kirim hasil segmentasi ke backend-uvip untuk disimpan ke DB."""</span>
+    <span class="kw">try</span>:
+        <span class="kw">async with</span> httpx.<span class="tp">AsyncClient</span>(timeout=<span class="nu">30.0</span>) <span class="kw">as</span> client:
+            <span class="kw">await</span> client.post(
+                f<span class="st">"{settings.uvip_api_base_url}/segmentation-results/"</span>,
+                json=result,
+                headers={<span class="st">"Authorization"</span>: f<span class="st">"Bearer {settings.uvip_api_token}"</span>},
+            )
+    <span class="kw">except</span> <span class="tp">Exception</span> <span class="kw">as</span> e:
+        logger.error(<span class="st">"Callback ke backend gagal: %s"</span>, e)</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4: Flutter polling -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-icon icon-blue">📊</div>
+      <div>
+        <div class="section-title">Step 4 — Flutter: Polling Hasil Segmentasi</div>
+        <div class="section-desc">result_provider.dart — poll backend sampai hasil siap, lalu tampilkan</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="code-block">
+        <div class="code-label"><span class="dot"></span>lib/providers/result_provider.dart — tambah polling method</div>
+        <pre><span class="kw">import</span> <span class="st">'package:uvip/services/result_service.dart'</span>;
+<span class="kw">import</span> <span class="st">'package:uvip/models/segmentation_result_model.dart'</span>;
+
+<span class="kw">class</span> <span class="tp">ResultProvider</span> <span class="kw">with</span> <span class="tp">ChangeNotifier</span> {
+  <span class="tp">SegmentationResultModel</span>? _segResult;
+  <span class="tp">SegmentationResultModel</span>? <span class="kw">get</span> segResult => _segResult;
+
+  <span class="kw">bool</span> _isPolling = <span class="kw">false</span>;
+  <span class="kw">bool</span> <span class="kw">get</span> isPolling => _isPolling;
+
+  <span class="kw">String</span>? _processingStatus;  <span class="cm">// "processing" | "done" | "timeout"</span>
+  <span class="kw">String</span>? <span class="kw">get</span> processingStatus => _processingStatus;
+
+  <span class="cm">/// Dipanggil setelah upload foto berhasil</span>
+  <span class="kw">Future</span>&lt;<span class="kw">void</span>&gt; <span class="fn">pollSegmentationResult</span>(<span class="kw">String</span> photoId) <span class="kw">async</span> {
+    _isPolling = <span class="kw">true</span>;
+    _processingStatus = <span class="st">'processing'</span>;
+    _segResult = <span class="kw">null</span>;
+    notifyListeners();
+
+    <span class="cm">// Poll maksimal 30x dengan interval 2 detik = timeout 60 detik</span>
+    <span class="kw">for</span> (<span class="kw">int</span> i = <span class="nu">0</span>; i < <span class="nu">30</span>; i++) {
+      <span class="kw">await</span> <span class="tp">Future</span>.delayed(<span class="kw">const</span> <span class="tp">Duration</span>(seconds: <span class="nu">2</span>));
+
+      <span class="kw">try</span> {
+        <span class="kw">final</span> result = <span class="kw">await</span> <span class="tp">ResultService</span>().getSegmentationByPhotoId(photoId);
+        <span class="kw">if</span> (result != <span class="kw">null</span>) {
+          _segResult = result;
+          _processingStatus = <span class="st">'done'</span>;
+          _isPolling = <span class="kw">false</span>;
+          notifyListeners();
+          <span class="kw">return</span>;
+        }
+      } <span class="kw">catch</span> (_) {
+        <span class="cm">// Lanjut polling meski ada error sementara</span>
+      }
+    }
+
+    <span class="cm">// Timeout setelah 60 detik</span>
+    _processingStatus = <span class="st">'timeout'</span>;
+    _isPolling = <span class="kw">false</span>;
+    notifyListeners();
+  }
+}</pre>
+      </div>
+
+      <div class="code-block">
+        <div class="code-label"><span class="dot"></span>lib/services/result_service.dart — tambah method GET by photo_id</div>
+        <pre><span class="kw">Future</span>&lt;<span class="tp">SegmentationResultModel</span>?&gt; <span class="fn">getSegmentationByPhotoId</span>(<span class="kw">String</span> photoId) <span class="kw">async</span> {
+  <span class="kw">final</span> response = <span class="kw">await</span> _dio.get(
+    <span class="st">'/segmentation-results/'</span>,
+    queryParameters: {<span class="st">'photo_id'</span>: photoId},
+  );
+  <span class="kw">if</span> (response.data <span class="kw">is</span> <span class="tp">List</span> && (response.data <span class="kw">as</span> <span class="tp">List</span>).isNotEmpty) {
+    <span class="kw">return</span> <span class="tp">SegmentationResultModel</span>.fromJson(response.data[<span class="nu">0</span>]);
+  }
+  <span class="kw">return null</span>;  <span class="cm">// belum ada → lanjut polling</span>
+}</pre>
+      </div>
+
+      <div class="code-block">
+        <div class="code-label"><span class="dot"></span>Backend — tambah query param di segmentation_results.py</div>
+        <pre>@router.get(<span class="st">"/"</span>, response_model=<span class="tp">List</span>[<span class="tp">SegmentationResultResponse</span>])
+<span class="kw">def</span> <span class="fn">list_segmentations</span>(
+    photo_id: <span class="tp">Optional</span>[<span class="tp">UUID</span>] = <span class="kw">None</span>,  <span class="cm"># tambah filter ini</span>
+    db: <span class="tp">Session</span> = <span class="tp">Depends</span>(get_db),
+    current_user: <span class="tp">User</span> = <span class="tp">Depends</span>(get_current_user)
+):
+    query = db.query(<span class="tp">SegmentationResult</span>)
+    <span class="kw">if</span> photo_id:
+        query = query.filter(<span class="tp">SegmentationResult</span>.photo_id == photo_id)
+    <span class="kw">return</span> query.all()</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rekomendasi Server -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-icon icon-red">🖥️</div>
+      <div>
+        <div class="section-title">Rekomendasi Server — Budget Minimum 3 Bulan</div>
+        <div class="section-desc">Perbandingan opsi untuk menjalankan backend-uvip + uvip-ai dalam 1 VPS</div>
+      </div>
+    </div>
+    <div class="section-body">
+
+      <div class="alert alert-warn">
+        <div class="alert-icon">⚠️</div>
+        <div><strong>Akar masalah:</strong> 1 vCPU + 1GB RAM tidak cukup karena SegFormer-B5 butuh ~2GB RAM saat inference, DINOv2-Large butuh ~4GB. Upload video besar juga butuh RAM buffer. Minimum yang realistis adalah <strong>4GB RAM + 2 vCPU</strong> untuk CPU-only tanpa GPU.</div>
+      </div>
+
+      <div class="server-grid">
+        <div class="server-card recommended">
+          <div class="server-best">⭐ REKOMENDASI</div>
+          <div class="server-name">Hetzner CX22</div>
+          <div class="server-spec">
+            2 vCPU (AMD)<br>
+            4 GB RAM<br>
+            40 GB NVMe SSD<br>
+            20 TB bandwidth<br>
+            Lokasi: Jerman/Finlandia
+          </div>
+          <div class="server-price-row">
+            <div class="server-price-main">~$6</div>
+            <div class="server-price-period">/bulan</div>
+          </div>
+          <div class="server-total">3 bulan ≈ $18</div>
+          <div class="server-note">Terbaik untuk budget. SegFormer-B5 bisa jalan ~15–30 detik/foto di CPU. Cukup untuk development & demo.</div>
+        </div>
+
+        <div class="server-card">
+          <div class="server-name">Hetzner CX32</div>
+          <div class="server-spec">
+            4 vCPU (AMD)<br>
+            8 GB RAM<br>
+            80 GB NVMe SSD<br>
+            20 TB bandwidth
+          </div>
+          <div class="server-price-row">
+            <div class="server-price-main">~$13</div>
+            <div class="server-price-period">/bulan</div>
+          </div>
+          <div class="server-total">3 bulan ≈ $39</div>
+          <div class="server-note">Lebih nyaman. DINOv2-Small bisa jalan. Upload video tidak timeout. Rekomendasi jika ada budget.</div>
+        </div>
+
+        <div class="server-card">
+          <div class="server-name">DigitalOcean Basic</div>
+          <div class="server-spec">
+            2 vCPU<br>
+            4 GB RAM<br>
+            80 GB SSD<br>
+            4 TB bandwidth
+          </div>
+          <div class="server-price-row">
+            <div class="server-price-main">~$24</div>
+            <div class="server-price-period">/bulan</div>
+          </div>
+          <div class="server-total">3 bulan ≈ $72</div>
+          <div class="server-note">Antarmuka lebih ramah, support lebih mudah. Tapi 4x lebih mahal dari Hetzner untuk spek sama.</div>
+        </div>
+
+        <div class="server-card">
+          <div class="server-name">RunPod GPU (T4)</div>
+          <div class="server-spec">
+            8 vCPU<br>
+            24 GB RAM<br>
+            NVIDIA T4 (16GB VRAM)<br>
+            Bayar per jam
+          </div>
+          <div class="server-price-row">
+            <div class="server-price-main">~$0.20</div>
+            <div class="server-price-period">/jam</div>
+          </div>
+          <div class="server-total">3 bulan non-stop ≈ $432</div>
+          <div class="server-note">Mahal jika non-stop. Cocok jika hanya dipakai saat demo. SegFormer + DINOv2 Full jalan &lt;1 detik/foto.</div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="table-wrap" style="margin-top:4px">
+        <table>
+          <thead>
+            <tr>
+              <th>Aspek</th>
+              <th>Hetzner CX22 ($6/bln)</th>
+              <th>Hetzner CX32 ($13/bln)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>SegFormer-B5 inference</td><td>~15–30 detik/foto</td><td>~8–15 detik/foto</td></tr>
+            <tr><td>DINOv2-Large</td><td>❌ OOM (tidak bisa)</td><td>❌ OOM (tidak bisa)</td></tr>
+            <tr><td>DINOv2-Small</td><td>⚠️ Lambat ~60 detik</td><td>✅ ~20–30 detik</td></tr>
+            <tr><td>Upload video 100MB</td><td>⚠️ Bisa timeout</td><td>✅ Stabil</td></tr>
+            <tr><td>PostgreSQL + backend</td><td>✅ Cukup</td><td>✅ Nyaman</td></tr>
+            <tr><td>Harga 3 bulan</td><td class="price">~$18</td><td class="price">~$39</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="alert alert-info" style="margin-top:4px">
+        <div class="alert-icon">💡</div>
+        <div><strong>Strategi untuk DINOv2 di CPU:</strong> Sementara skip DINOv2 — model prediksi bisa dilatih hanya dari 5 metrik SegFormer. Akurasi sedikit turun tapi latency jauh lebih baik. DINOv2 baru diaktifkan kalau sudah ada GPU.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cara deploy 1 VPS -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-icon icon-green">🚀</div>
+      <div>
+        <div class="section-title">Deploy Backend + AI dalam 1 VPS</div>
+        <div class="section-desc">Konfigurasi docker-compose.yml untuk gabungkan backend-uvip dan uvip-ai</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="code-block">
+        <div class="code-label"><span class="dot"></span>docker-compose.yml — 1 VPS, 2 service, 1 network</div>
+        <pre><span class="kw">version:</span> <span class="st">'3.9'</span>
+
+<span class="kw">services:</span>
+  <span class="cm"># ── Database ──────────────────────────────────────</span>
+  <span class="kw">db:</span>
+    <span class="kw">image:</span> <span class="st">postgis/postgis:15-3.3</span>
+    <span class="kw">environment:</span>
+      POSTGRES_DB: uvip
+      POSTGRES_USER: uvip
+      POSTGRES_PASSWORD: <span class="st">${DB_PASSWORD}</span>
+    <span class="kw">volumes:</span>
+      - pgdata:/var/lib/postgresql/data
+    <span class="kw">restart:</span> always
+
+  <span class="cm"># ── Backend API (port 8000) ────────────────────────</span>
+  <span class="kw">backend:</span>
+    <span class="kw">build:</span> ./backend-uvip
+    <span class="kw">ports:</span>
+      - <span class="st">"8000:8000"</span>
+    <span class="kw">environment:</span>
+      DATABASE_URL: postgresql://uvip:<span class="st">${DB_PASSWORD}</span>@db:5432/uvip
+      SECRET_KEY: <span class="st">${SECRET_KEY}</span>
+      UVIP_AI_URL: http://uvip-ai:8001  <span class="cm"># nama service, bukan localhost</span>
+    <span class="kw">depends_on:</span>
+      - db
+    <span class="kw">volumes:</span>
+      - ./uploads:/app/uploads
+    <span class="kw">restart:</span> always
+
+  <span class="cm"># ── AI Service (port 8001, internal only) ─────────</span>
+  <span class="kw">uvip-ai:</span>
+    <span class="kw">build:</span> ./uvip-ai
+    <span class="kw">ports:</span>
+      - <span class="st">"127.0.0.1:8001:8001"</span>  <span class="cm"># hanya accessible dari dalam VPS</span>
+    <span class="kw">environment:</span>
+      UVIP_API_BASE_URL: http://backend:8000
+      UVIP_API_TOKEN: <span class="st">${INTERNAL_TOKEN}</span>
+      UVIP_DEVICE: cpu
+      UVIP_LOW_VRAM_MODE: <span class="st">"true"</span>
+      UVIP_USE_FP16: <span class="st">"false"</span>  <span class="cm"># fp16 tidak ada untungnya di CPU</span>
+    <span class="kw">volumes:</span>
+      - ./uvip-ai/models:/app/models   <span class="cm"># model tidak re-download tiap restart</span>
+      - ./uvip-ai/data:/app/data
+    <span class="kw">deploy:</span>
+      resources:
+        limits:
+          memory: <span class="st">3G</span>   <span class="cm"># batas RAM agar tidak OOM seluruh VPS</span>
+    <span class="kw">restart:</span> always
+
+<span class="kw">volumes:</span>
+  pgdata:</pre>
+      </div>
+
+      <div class="code-block">
+        <div class="code-label"><span class="dot"></span>.env — isi di VPS</div>
+        <pre>DB_PASSWORD=ganti_password_kuat
+SECRET_KEY=ganti_secret_key_panjang
+INTERNAL_TOKEN=token_internal_antar_service</pre>
+      </div>
+
+      <div class="step-list" style="margin-top:4px">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-content">
+            <div class="step-title">Upload ke VPS</div>
+            <div class="step-body"><code>rsync -avz ./backend-uvip ./uvip-ai ./docker-compose.yml .env user@ip:~/uvip/</code></div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-content">
+            <div class="step-title">Build & run</div>
+            <div class="step-body"><code>cd ~/uvip && docker compose up -d --build</code></div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-content">
+            <div class="step-title">Download models AI (sekali saja)</div>
+            <div class="step-body"><code>docker compose exec uvip-ai python -c "from uvip_ai.segmentation.segformer import SegformerB5; SegformerB5()"</code> — ini download model HuggingFace ke volume, tidak perlu ulang saat restart.</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-content">
+            <div class="step-title">Point Flutter ke IP VPS</div>
+            <div class="step-body">Ganti baseUrl di <code>lib/core/network/dio_client.dart</code> ke <code>http://IP_VPS:8000</code>.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ringkasan -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-icon icon-green">✅</div>
+      <div>
+        <div class="section-title">Ringkasan untuk Tim</div>
+        <div class="section-desc">Yang dikerjakan, oleh siapa, estimasi waktu</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Task</th><th>File</th><th>Estimasi</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>1</td><td><strong>Flutter: Ganti ML Kit ke ImageLabeler</strong><br><span style="color:var(--text-3);font-size:12px">Label urban muncul realtime di kamera</span></td><td>aicam_provider.dart<br>aicam_screen.dart</td><td>2–3 jam</td></tr>
+            <tr><td>2</td><td><strong>Backend: Tambah config UVIP_AI_URL</strong></td><td>core/config.py<br>.env</td><td>30 menit</td></tr>
+            <tr><td>3</td><td><strong>Backend: Trigger async ke uvip-ai setelah upload</strong></td><td>routers/street_photos.py</td><td>1 jam</td></tr>
+            <tr><td>4</td><td><strong>Backend: Filter photo_id di segmentation-results</strong></td><td>routers/segmentation_results.py</td><td>30 menit</td></tr>
+            <tr><td>5</td><td><strong>uvip-ai: Terima photo_id + callback ke backend</strong></td><td>uvip-ai/api/main.py</td><td>1–2 jam</td></tr>
+            <tr><td>6</td><td><strong>uvip-ai: Nonaktifkan DINOv2-Large sementara</strong><br><span style="color:var(--text-3);font-size:12px">Ganti ke DINOv2-Small atau skip</span></td><td>config.py + pipeline</td><td>1 jam</td></tr>
+            <tr><td>7</td><td><strong>Flutter: Polling segmentation result</strong><br><span style="color:var(--text-3);font-size:12px">Tampil loading → hasil</span></td><td>result_provider.dart<br>result_service.dart</td><td>2–3 jam</td></tr>
+            <tr><td>8</td><td><strong>Deploy docker-compose di Hetzner CX22</strong></td><td>docker-compose.yml</td><td>2 jam</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="alert alert-ok">
+        <div class="alert-icon">✅</div>
+        <div><strong>Total estimasi:</strong> 2–3 hari kerja untuk 1 developer. Server minimum <strong>Hetzner CX22 ~$18 untuk 3 bulan</strong>. Jika budget lebih, <strong>CX32 ~$39</strong> jauh lebih nyaman untuk AI inference.</div>
+      </div>
+    </div>
+  </div>
+
+</div>

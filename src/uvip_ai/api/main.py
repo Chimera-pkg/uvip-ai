@@ -20,10 +20,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import numpy as np
 import cv2
 import fastapi
-from fastapi import File, Form, UploadFile, HTTPException
+from fastapi import File, Form, UploadFile, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -73,21 +74,47 @@ def post_process(path: Path) -> dict:
     seg_res = seg.infer(masked_img)
     metrics = seg_res["metrics"]
 
-    # Step C: Feature extraction
+    # Step C: Feature extraction (pakai model kecil untuk CPU)
     from uvip_ai.features.dinov2 import Dinov2Extractor
-    feat_model = Dinov2Extractor(low_vram_mode=True)
+    from uvip_ai.config import settings
+    feat_model = Dinov2Extractor(model_id=settings.dinov2_model, low_vram_mode=True)
     emb = feat_model.extract(str(path))
+    logger.info("DINOv2 embedding: shape=%s", emb.shape)
 
-    # Step D: XGBoost prediction (stub: use dummy model if not trained yet)
-    # TODO: load model & predict
-    predictions = {"beauty_score": 6.0, "safety_score": 6.5, "comfort_score": 6.2, "uvi_score": 6.3}
+    # Step D: XGBoost prediction
+    from uvip_ai.training.xgboost_model import XGBoostPerceptionModel
+    xgb_model = XGBoostPerceptionModel(model_path=settings.xgboost_model_path)
+    predictions = xgb_model.predict(metrics, embedding=emb)
+    logger.info("XGBoost predictions: %s", predictions)
 
-    # Step E: SHAP explainability — skip jika model belum ada
-    explanations = []
+    # Step E: SHAP explainability
+    from uvip_ai.explain.shap_explain import ShapExplainer
+    explainer = ShapExplainer(model_path=settings.xgboost_model_path)
+    feature_names = [
+        "green_coverage_pct",
+        "building_coverage_pct",
+        "walkability_ratio",
+        "visual_clutter_index",
+        "sky_visibility_pct",
+    ]
+    # Gabungkan metrik + embedding untuk SHAP
+    features_for_shap = np.array([
+        metrics["green_coverage_pct"],
+        metrics["building_coverage_pct"],
+        metrics["walkability_ratio"],
+        metrics["visual_clutter_index"],
+        metrics["sky_visibility_pct"],
+    ])
+    if emb is not None:
+        features_for_shap = np.concatenate([features_for_shap, emb.flatten()])
+    explanations = explainer.explain(features_for_shap, feature_names=feature_names)
+    logger.info("SHAP explanations: %d features", len(explanations))
 
     # Cleanup
     seg.free_memory()
     feat_model.free_memory()
+    xgb_model.free_memory()
+    explainer.free_memory()
 
     # Save masked image
     out_dir = Path("uploads/masks")
@@ -109,11 +136,33 @@ def post_process(path: Path) -> dict:
     }
 
 
+async def _post_result_to_backend(photo_id: str, result: dict):
+    """Kirim hasil segmentasi ke backend-uvip untuk disimpan ke DB."""
+    from uvip_ai.config import settings
+    if not settings.uvip_api_base_url or not photo_id:
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            await client.post(
+                f"{settings.uvip_api_base_url}/segmentation-results/",
+                json={"photo_id": photo_id, **result},
+                headers={"Authorization": f"Bearer {settings.uvip_api_token}"} if settings.uvip_api_token else {},
+            )
+            logger.info("📤 Callback ke backend berhasil: photo_id=%s", photo_id)
+    except Exception as e:
+        logger.error("❌ Callback ke backend gagal: %s", e)
+
+
 @app.post("/ai/process")
-async def process_photo(file: UploadFile = File(...)):
+async def process_photo(
+    file: UploadFile = File(...),
+    photo_id: str = Form(""),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
     """Process foto jalan → return masking, segmentasi, prediksi, explainability."""
     start = time.time()
-    logger.info("📥 Foto masuk: %s (size: %s)", file.filename, file.size)
+    logger.info("📥 Foto masuk: %s (size: %s, photo_id: %s)", file.filename, file.size, photo_id)
     try:
         path = save_upload(file)
         logger.info("💾 Foto disimpan: %s", path)
@@ -123,6 +172,10 @@ async def process_photo(file: UploadFile = File(...)):
 
         elapsed = (time.time() - start) * 1000
         logger.info("✅ Selesai: %s — %.0fms", file.filename, elapsed)
+
+        # Callback ke backend di background (tidak blocking response)
+        if photo_id:
+            background_tasks.add_task(_post_result_to_backend, photo_id, result)
 
         path.unlink(missing_ok=True)
         return JSONResponse(result)

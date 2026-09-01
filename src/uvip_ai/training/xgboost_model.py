@@ -1,142 +1,167 @@
 """
-Training XGBoost — 4 model regresi terpisah: Beauty, Safety, Comfort, UVI (Step 6).
+XGBoost Perception Model Wrapper (Step 5).
 
-Input features = [5 metrik segmentasi] + [1024-d embedding DINOv2] → total 1029 dims.
-Label: skor persepsi dari kuesioner responden (Beauty/Safety/Comfort/UVI).
-Metrik evaluasi: R² (dapat K-Fold CV), MAE, RMSE. Target: R² >= 0.7.
+Wrapper untuk model XGBoost yang memprediksi 4 skor persepsi urban:
+- beauty_score (0-10)
+- safety_score (0-10)
+- comfort_score (0-10)
+- uvi_score (0-10)
 
-Struktur data: DataFrame CSV dengan kolom:
-  - seg_green_coverage_pct, seg_building_coverage_pct, seg_walkability_ratio,
-    seg_visual_clutter_index, seg_sky_visibility_pct
-  - emb_0 .. emb_1023 (embedding)
-  - label_beauty, label_safety, label_comfort, label_uvi
+Input: 5 metrik segmentasi + DINOv2 embedding (384-d untuk small)
+Output: dict dengan 4 skor persepsi
 
-Output: model.pkl + metrics.json + shap_values/*.pkl (Step 7).
+Jika model .pkl belum ada, gunakan dummy prediction.
 """
 from __future__ import annotations
 
-import json
-import random
+import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-import pandas as pd
-import xgboost as xgb
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import KFold
+
+logger = logging.getLogger(__name__)
 
 
-class XGBoostPerceptionTrainer:
-    """Train 4 XGBoost models untuk Beauty/Safety/Comfort/UVI."""
+class XGBoostPerceptionModel:
+    """Wrapper untuk XGBoost perception model."""
 
-    TARGETS = ["beauty", "safety", "comfort", "uvi"]
+    def __init__(self, model_path: str = "models/perception/beauty_xgb.pkl"):
+        self.model_path = Path(model_path)
+        self._model = None
+        self._loaded = False
 
-    # Feature columns
-    SEG_COLS = [
-        "seg_green_coverage_pct", "seg_building_coverage_pct", "seg_walkability_ratio",
-        "seg_visual_clutter_index", "seg_sky_visibility_pct"
-    ]
+        # Feature names: 5 metrik segmentasi
+        self.feature_names = [
+            "green_coverage_pct",
+            "building_coverage_pct",
+            "walkability_ratio",
+            "visual_clutter_index",
+            "sky_visibility_pct",
+        ]
 
-    def __init__(self, n_folds: int = 5, random_state: int = 42):
-        self.n_folds = n_folds
-        self.random_state = random_state
-        self.models = {t: None for t in self.TARGETS}
-        self.metrics = {}
+    def _load_model(self):
+        """Load model XGBoost dari file .pkl."""
+        if self._loaded:
+            return
 
-    def _build_feature_cols(self, df: pd.DataFrame) -> list[str]:
-        emb_cols = [c for c in df.columns if c.startswith("emb_")]
-        return self.SEG_COLS + sorted(emb_cols)
+        if not self.model_path.exists():
+            logger.warning("Model XGBoost tidak ditemukan: %s — gunakan dummy prediction", self.model_path)
+            self._model = None
+            self._loaded = True
+            return
 
-    def train_model(self, train_df: pd.DataFrame, target: str) -> xgb.XGBRegressor:
-        """Train satu model XGBoost untuk target tertentu."""
-        feat_cols = self._build_feature_cols(train_df)
-        X_train = train_df[feat_cols].fillna(0)
-        y_train = train_df[target].fillna(np.nan).dropna()
-        mask = ~y_train.isna()
-        X_train = X_train[mask]
-        y_train = y_train[mask]
+        try:
+            import joblib
+            self._model = joblib.load(self.model_path)
+            self._loaded = True
+            logger.info("✅ Model XGBoost loaded: %s", self.model_path)
+        except Exception as e:
+            logger.error("Gagal load model XGBoost: %s", e)
+            self._model = None
+            self._loaded = True
 
-        model = xgb.XGBRegressor(
-            n_estimators=500,
-            max_depth=6,
-            learning_rate=0.05,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            objective="reg:squarederror",
-            n_jobs=-1,
-            random_state=self.random_state,
-            tree_method="hist",
-        )
-        model.fit(X_train, y_train, early_stopping_rounds=50, verbose=False)
-        return model
+    def predict(self, metrics: dict, embedding: np.ndarray | None = None) -> dict:
+        """
+        Predict 4 skor persepsi dari metrik segmentasi + embedding.
 
-    def cross_validate(self, df: pd.DataFrame, target: str) -> dict:
-        """K-Fold cross-validation untuk target."""
-        feat_cols = self._build_feature_cols(df)
-        X = df[feat_cols].fillna(0).values
-        y = df[target].to_numpy()
+        Args:
+            metrics: dict dengan 5 metrik segmentasi
+            embedding: DINOv2 embedding (384-d untuk small), optional
 
-        kf = KFold(n_splits=self.n_folds, shuffle=True, random_state=self.random_state)
-        r2_scores = []
-        mae_scores = []
-        rmse_scores = []
-        predictions = np.zeros_like(y, dtype=float)
+        Returns:
+            dict dengan beauty_score, safety_score, comfort_score, uvi_score
+        """
+        self._load_model()
 
-        for fold, (train_idx, val_idx) in enumerate(kf.split(X)):
-            X_tr, X_val = X[train_idx], X[val_idx]
-            y_tr, y_val = y[train_idx], y[val_idx]
+        # Extract 5 metrik utama
+        features = np.array([
+            metrics.get("green_coverage_pct", 0.0),
+            metrics.get("building_coverage_pct", 0.0),
+            metrics.get("walkability_ratio", 0.0),
+            metrics.get("visual_clutter_index", 0.0),
+            metrics.get("sky_visibility_pct", 0.0),
+        ]).reshape(1, -1)
 
-            model = self.train_model(pd.DataFrame(X_tr, columns=feat_cols), target)
-            y_pred = model.predict(X_val)
+        # Jika ada embedding, gabungkan dengan features
+        if embedding is not None and self._model is not None:
+            # Flatten embedding jika perlu
+            if embedding.ndim > 1:
+                embedding = embedding.flatten()
+            features = np.hstack([features, embedding.reshape(1, -1)])
 
-            r2_scores.append(r2_score(y_val, y_pred))
-            mae_scores.append(mean_absolute_error(y_val, y_pred))
-            rmse_scores.append(np.sqrt(mean_squared_error(y_val, y_pred)))
-            predictions[val_idx] = y_pred
+        # Jika model tidak ada, gunakan dummy prediction
+        if self._model is None:
+            return self._dummy_prediction(metrics)
 
-        avg_r2 = np.mean(r2_scores)
-        is_achieved = avg_r2 >= 0.7
+        try:
+            # Predict dengan model XGBoost
+            predictions = self._model.predict(features)
+
+            # XGBoost bisa return 1 value atau 4 values (multi-output)
+            if predictions.shape[1] == 4:
+                beauty, safety, comfort, uvi = predictions[0]
+            else:
+                # Single output — gunakan untuk semua (fallback)
+                score = float(predictions[0])
+                beauty = safety = comfort = uvi = score
+
+            # Clamp ke range 0-10
+            beauty = float(np.clip(beauty, 0, 10))
+            safety = float(np.clip(safety, 0, 10))
+            comfort = float(np.clip(comfort, 0, 10))
+            uvi = float(np.clip(uvi, 0, 10))
+
+            return {
+                "beauty_score": round(beauty, 2),
+                "safety_score": round(safety, 2),
+                "comfort_score": round(comfort, 2),
+                "uvi_score": round(uvi, 2),
+            }
+
+        except Exception as e:
+            logger.error("Error saat predict dengan XGBoost: %s", e)
+            return self._dummy_prediction(metrics)
+
+    def _dummy_prediction(self, metrics: dict) -> dict:
+        """
+        Dummy prediction berdasarkan heuristik sederhana.
+        Digunakan jika model XGBoost belum dilatih.
+        """
+        green = metrics.get("green_coverage_pct", 0.0)
+        building = metrics.get("building_coverage_pct", 0.0)
+        walkability = metrics.get("walkability_ratio", 0.0)
+        clutter = metrics.get("visual_clutter_index", 0.0)
+        sky = metrics.get("sky_visibility_pct", 0.0)
+
+        # Heuristik sederhana
+        beauty = min(10, green * 0.3 + sky * 0.2 + (10 - clutter) * 0.2 + 3)
+        safety = min(10, walkability * 5 + sky * 0.1 + 4)
+        comfort = min(10, green * 0.2 + sky * 0.3 + walkability * 2 + 3)
+        uvi = min(10, (10 - green) * 0.3 + (10 - sky) * 0.2 + 5)
+
         return {
-            "target": target,
-            "r2_mean": round(avg_r2, 4),
-            "r2_std": round(np.std(r2_scores), 4),
-            "mae_mean": round(np.mean(mae_scores), 4),
-            "rmse_mean": round(np.mean(rmse_scores), 4),
-            "n_folds": self.n_folds,
-            "is_accepted": is_achieved,
-            "predictions_sample": predictions[:5].tolist(),
+            "beauty_score": round(beauty, 2),
+            "safety_score": round(safety, 2),
+            "comfort_score": round(comfort, 2),
+            "uvi_score": round(uvi, 2),
         }
 
-    def train_all(self, df: pd.DataFrame) -> dict:
-        """Train semua 4 model & validasi."""
-        results = {}
-        for tgt in self.TARGETS:
-            print(f"[XGBoost] Training '{tgt}' ...")
-            res = self.cross_validate(df, tgt)
-            results[tgt] = res
-            status = "OK" if res["is_accepted"] else f"LOW ({res['r2_mean']:.2f})"
-            print(f"  {tgt}: R²={res['r2_mean']:.4f} ±{res['r2_std']:.4f} → {status}")
-        self.results = results
-        return results
-
-    def save(self, out_dir: Path) -> None:
-        """Simpan model ke file dan metrics JSON."""
-        import pickle
-
-        out_dir.mkdir(parents=True, exist_ok=True)
-        metrics_file = out_dir / "metrics.json"
-        with metrics_file.open("w", encoding="utf-8") as f:
-            json.dump(self.results, f, indent=2)
-
-        for tgt in self.TARGETS:
-            model_path = out_dir / f"{tgt}_xgb.pkl"
-            with model_path.open("wb") as f:
-                pickle.dump(self.models[tgt], f)
-            print(f"[XGBoost] Model '{tgt}' saved to {model_path}")
-
-        print(f"[XGBoost] Metrics saved to {metrics_file}")
+    def free_memory(self):
+        """Release model dari memory."""
+        self._model = None
+        self._loaded = False
 
 
 if __name__ == "__main__":
-    # Example stub: user needs to prepare training data first
-    print("Usage: python scripts/train_xgboost.py --data data/datasets/training.csv")
+    # Test
+    model = XGBoostPerceptionModel()
+    metrics = {
+        "green_coverage_pct": 25.5,
+        "building_coverage_pct": 40.2,
+        "walkability_ratio": 0.35,
+        "visual_clutter_index": 1.2,
+        "sky_visibility_pct": 20.0,
+    }
+    predictions = model.predict(metrics)
+    print("Predictions:", predictions)

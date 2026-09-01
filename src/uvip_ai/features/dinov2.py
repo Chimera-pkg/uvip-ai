@@ -1,14 +1,22 @@
 """
-Feature Extraction — DINOv2 Large (Step 4).
+Feature Extraction — DINOv2 (Step 4).
 
-Model: facebook/dinov2-large → embedding 1024-d per image.
+Model: facebook/dinov2-{small|base|large} → embedding per image.
 Tidak fine-tuning, hanya inference pretrained. Output: vektor embedding
 yang digabung dengan metrik segmentasi untuk input XGBoost.
 
-Notes untuk VRAM rendah: batch_size kecil, fp16, unload model after infer.
+Default: dinov2-small untuk CPU-only VPS (hemat RAM ~500MB).
+Untuk GPU: bisa pakai dinov2-large (1024-d) via env DINOV2_MODEL.
+
+Embedding dimensions per variant:
+  - small:  384-d  (~500MB RAM)
+  - base:   768-d  (~1.5GB RAM)
+  - large:  1024-d (~4GB RAM)
+  - giant:  1536-d (~8GB RAM)
 """
 from __future__ import annotations
 
+import logging
 import math
 from pathlib import Path
 from typing import Any
@@ -19,22 +27,34 @@ import torch.nn.functional as F
 from PIL import Image
 from transformers import AutoImageProcessor, Dinov2Model
 
+logger = logging.getLogger(__name__)
+
+# Mapping model → embedding dimension
+EMBED_DIMS = {
+    "facebook/dinov2-small": 384,
+    "facebook/dinov2-base": 768,
+    "facebook/dinov2-large": 1024,
+    "facebook/dinov2-giant": 1536,
+}
+
 
 class Dinov2Extractor:
-    """DINOv2 Large feature extractor (embedding 1024-d)."""
+    """DINOv2 feature extractor — model variant configurable via config/settings."""
 
-    DEFAULT_MODEL_ID = "facebook/dinov2-large"
+    DEFAULT_MODEL_ID = "facebook/dinov2-small"
     PATCH_SIZE = 14
-    EMBED_DIM = 1024
 
     def __init__(self, model_id: str | None = None, device: str | None = None,
                  low_vram_mode: bool = True):
         self.model_id = model_id or self.DEFAULT_MODEL_ID
+        self.embed_dim = EMBED_DIMS.get(self.model_id, 384)
         self.low_vram_mode = low_vram_mode
         self._model = None
         self._processor = None
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._dtype = torch.float16 if (self._device == "cuda" and low_vram_mode) else torch.float32
+        logger.info("DINOv2 model: %s (embed_dim=%d, device=%s)",
+                     self.model_id, self.embed_dim, self._device)
 
     def _load(self) -> None:
         if self._model is not None:
