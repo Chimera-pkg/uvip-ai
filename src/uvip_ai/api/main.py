@@ -123,7 +123,7 @@ def post_process(path: Path) -> dict:
     cv2.imwrite(str(mask_path), masked_img if isinstance(masked_img, np.ndarray) else cv2.imread(str(path)))
 
     return {
-        "privacy_masked_url": str(mask_path.relative_to(Path.cwd())),
+        "privacy_masked_url": str(mask_path),
         "segmentation_results": {
             "green_coverage_pct": metrics["green_coverage_pct"],
             "building_coverage_pct": metrics["building_coverage_pct"],
@@ -134,6 +134,105 @@ def post_process(path: Path) -> dict:
         "perception_prediction": predictions,
         "shap_values": explanations,
     }
+
+
+@app.post("/ai/process-video")
+async def process_video(
+    file: UploadFile = File(...),
+    photo_id: Optional[str] = Form(None),
+    fps: Optional[float] = Form(None),
+    overlay_alpha: float = Form(0.5),
+    background_tasks: BackgroundTasks = None,
+):
+    """
+    Process video → segmentation overlay.
+    Output: video dengan color-coded segmentation overlay.
+    File disimpan permanen di uploads/videos/.
+    """
+    start = time.time()
+    logger.info("Processing video: %s", file.filename)
+
+    path = save_upload(file)
+    video_out_dir = Path("uploads/videos")
+    video_out_dir.mkdir(parents=True, exist_ok=True)
+    frames_dir = video_out_dir / "temp_frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from uvip_ai.pipeline.video_processor import VideoProcessor
+        from uvip_ai.segmentation.segformer import SegformerB5
+
+        processor = VideoProcessor()
+        video_info = processor.get_video_info(str(path))
+        logger.info("Video info: %s", video_info)
+
+        # Extract frames
+        target_fps = fps if fps else video_info["fps"]
+        frame_paths = processor.extract_frames(str(path), fps=target_fps)
+        logger.info("Extracted %d frames", len(frame_paths))
+
+        # Load segmentation model once
+        seg = SegformerB5(low_vram_mode=True)
+
+        # Process each frame and save to temp
+        temp_processed = []
+        for i, frame_path in enumerate(frame_paths):
+            frame = cv2.imread(str(frame_path))
+            if frame is None:
+                continue
+
+            # Run segmentation
+            seg_res = seg.infer(frame)
+            seg_map = seg_res["seg_map"]
+
+            # Create overlay
+            overlay = processor.create_overlay(frame, seg_map, alpha=overlay_alpha)
+
+            # Save processed frame
+            temp_path = frames_dir / f"processed_{i:06d}.jpg"
+            cv2.imwrite(str(temp_path), overlay)
+            temp_processed.append(temp_path)
+
+            # Cleanup original temp frame
+            frame_path.unlink(missing_ok=True)
+
+            if (i + 1) % 10 == 0:
+                logger.info("Processed %d/%d frames", i + 1, len(frame_paths))
+
+        seg.free_memory()
+
+        # Combine frames back to video
+        output_filename = f"segmented_{path.stem}_{os.getpid()}.mp4"
+        output_path = video_out_dir / output_filename
+        processor.combine_frames_to_video(temp_processed, str(output_path), fps=target_fps)
+
+        # Cleanup temp frames
+        for p in temp_processed:
+            p.unlink(missing_ok=True)
+
+        elapsed = (time.time() - start) * 1000
+        logger.info("✅ Video processed: %s (%.0fms)", output_path.name, elapsed)
+
+        result = {
+            "video_url": str(output_path),
+            "video_info": video_info,
+            "frames_processed": len(temp_processed),
+            "processing_time_ms": elapsed,
+        }
+
+        if photo_id and background_tasks:
+            background_tasks.add_task(_post_result_to_backend, photo_id, result)
+
+        path.unlink(missing_ok=True)
+        return JSONResponse(result)
+
+    except Exception as e:
+        elapsed = (time.time() - start) * 1000
+        logger.error("❌ Video gagal: %s — %s (%.0fms)", file.filename, str(e), elapsed)
+        # Cleanup on error
+        for p in frames_dir.glob("*.jpg"):
+            p.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def _post_result_to_backend(photo_id: str, result: dict):
