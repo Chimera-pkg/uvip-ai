@@ -15,7 +15,9 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -36,6 +38,28 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("uvip_ai")
+
+# ─── Background Task Storage (video processing) ─────────────────────────────
+video_tasks: dict = {}
+video_tasks_lock = threading.Lock()
+TASK_CLEANUP_HOURS = 168  # 7 hari
+
+
+def _cleanup_old_tasks():
+    """Hapus task data yang sudah selesai lebih dari TASK_CLEANUP_HOURS."""
+    now = time.time()
+    cutoff = now - (TASK_CLEANUP_HOURS * 3600)
+    with video_tasks_lock:
+        expired = [
+            tid for tid, t in video_tasks.items()
+            if t.get("finished_at") and t["finished_at"] < cutoff
+        ]
+        for tid in expired:
+            task = video_tasks.pop(tid)
+            task_dir = Path("uploads/tasks") / tid
+            shutil.rmtree(task_dir, ignore_errors=True)
+            logger.info("Cleaned up old task: %s", tid)
+
 
 app = fastapi.FastAPI(title="UVIP-AI API", version="0.1.0")
 
@@ -171,6 +195,127 @@ def post_process(path: Path) -> dict:
     }
 
 
+def _run_video_task(
+    task_id: str,
+    source_path: Path,
+    target_fps: float,
+    overlay_alpha: float,
+    photo_id: Optional[str],
+):
+    """Background worker: process video frames + segmentation."""
+    start = time.time()
+    task_dir = Path("uploads/tasks") / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    frames_dir = task_dir / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    video_out_dir = Path("uploads/videos")
+    video_out_dir.mkdir(parents=True, exist_ok=True)
+
+    with video_tasks_lock:
+        video_tasks[task_id]["status"] = "processing"
+        video_tasks[task_id]["phase"] = "extracting_frames"
+
+    try:
+        from uvip_ai.pipeline.video_processor import VideoProcessor
+        from uvip_ai.segmentation.segformer import SegformerB5
+
+        processor = VideoProcessor()
+        video_info = processor.get_video_info(str(source_path))
+        effective_fps = target_fps if target_fps else video_info["fps"]
+
+        with video_tasks_lock:
+            video_tasks[task_id]["video_info"] = video_info
+
+        # Extract frames
+        frame_paths = processor.extract_frames(str(source_path), fps=effective_fps)
+        total_frames = len(frame_paths)
+        logger.info("Task %s: extracted %d frames", task_id, total_frames)
+
+        with video_tasks_lock:
+            video_tasks[task_id]["total_frames"] = total_frames
+            video_tasks[task_id]["phase"] = "segmentation"
+
+        # Load model once
+        seg = SegformerB5(low_vram_mode=True)
+
+        temp_processed = []
+        for i, frame_path in enumerate(frame_paths):
+            frame = cv2.imread(str(frame_path))
+            if frame is None:
+                continue
+
+            seg_res = seg.infer(frame)
+            seg_map = seg_res["seg_map"]
+            overlay = processor.create_overlay(frame, seg_map, alpha=overlay_alpha)
+
+            temp_path = frames_dir / f"processed_{i:06d}.jpg"
+            cv2.imwrite(str(temp_path), overlay)
+            temp_processed.append(temp_path)
+            frame_path.unlink(missing_ok=True)
+
+            with video_tasks_lock:
+                video_tasks[task_id]["frames_processed"] = i + 1
+
+            if (i + 1) % 10 == 0:
+                logger.info("Task %s: %d/%d frames", task_id, i + 1, total_frames)
+
+        seg.free_memory()
+
+        with video_tasks_lock:
+            video_tasks[task_id]["phase"] = "combining_video"
+
+        output_filename = f"segmented_{task_id}.mp4"
+        output_path = video_out_dir / output_filename
+        processor.combine_frames_to_video(temp_processed, str(output_path), fps=effective_fps)
+
+        for p in temp_processed:
+            p.unlink(missing_ok=True)
+        source_path.unlink(missing_ok=True)
+
+        elapsed = (time.time() - start) * 1000
+        logger.info("✅ Task %s done (%.0fms)", task_id, elapsed)
+
+        result = {
+            "video_url": str(output_path),
+            "video_info": video_info,
+            "frames_processed": len(temp_processed),
+            "processing_time_ms": elapsed,
+        }
+
+        with video_tasks_lock:
+            video_tasks[task_id].update({
+                "status": "completed",
+                "phase": "done",
+                "result": result,
+                "finished_at": time.time(),
+            })
+
+        if photo_id:
+            try:
+                import httpx
+                with httpx.Client(timeout=10.0) as client:
+                    client.post(
+                        os.environ.get("BACKEND_URL", "http://localhost:8000")
+                        + "/api/ai/video-result",
+                        json={"photo_id": photo_id, **result},
+                    )
+            except Exception as cb_err:
+                logger.warning("Callback failed for task %s: %s", task_id, cb_err)
+
+    except Exception as e:
+        elapsed = (time.time() - start) * 1000
+        logger.error("❌ Task %s gagal: %s (%.0fms)", task_id, str(e), elapsed)
+        for p in frames_dir.glob("*.jpg"):
+            p.unlink(missing_ok=True)
+        source_path.unlink(missing_ok=True)
+        with video_tasks_lock:
+            video_tasks[task_id].update({
+                "status": "failed",
+                "error": str(e),
+                "finished_at": time.time(),
+            })
+
+
 @app.post("/ai/process-video")
 async def process_video(
     file: UploadFile = File(...),
@@ -180,94 +325,79 @@ async def process_video(
     background_tasks: BackgroundTasks = None,
 ):
     """
-    Process video → segmentation overlay.
-    Output: video dengan color-coded segmentation overlay.
-    File disimpan permanen di uploads/videos/.
+    Process video → segmentation overlay (async).
+    Return task_id immediately, poll /ai/process-video/status/{task_id} for progress.
     """
-    start = time.time()
-    logger.info("Processing video: %s", file.filename)
+    import asyncio
 
-    path = save_upload(file)
-    video_out_dir = Path("uploads/videos")
-    video_out_dir.mkdir(parents=True, exist_ok=True)
-    frames_dir = video_out_dir / "temp_frames"
-    frames_dir.mkdir(parents=True, exist_ok=True)
+    _cleanup_old_tasks()
 
-    try:
-        from uvip_ai.pipeline.video_processor import VideoProcessor
-        from uvip_ai.segmentation.segformer import SegformerB5
+    task_id = str(uuid.uuid4())[:8]
+    path = await asyncio.to_thread(save_upload, file)
 
-        processor = VideoProcessor()
-        video_info = processor.get_video_info(str(path))
-        logger.info("Video info: %s", video_info)
-
-        # Extract frames
-        target_fps = fps if fps else video_info["fps"]
-        frame_paths = processor.extract_frames(str(path), fps=target_fps)
-        logger.info("Extracted %d frames", len(frame_paths))
-
-        # Load segmentation model once
-        seg = SegformerB5(low_vram_mode=True)
-
-        # Process each frame and save to temp
-        temp_processed = []
-        for i, frame_path in enumerate(frame_paths):
-            frame = cv2.imread(str(frame_path))
-            if frame is None:
-                continue
-
-            # Run segmentation
-            seg_res = seg.infer(frame)
-            seg_map = seg_res["seg_map"]
-
-            # Create overlay
-            overlay = processor.create_overlay(frame, seg_map, alpha=overlay_alpha)
-
-            # Save processed frame
-            temp_path = frames_dir / f"processed_{i:06d}.jpg"
-            cv2.imwrite(str(temp_path), overlay)
-            temp_processed.append(temp_path)
-
-            # Cleanup original temp frame
-            frame_path.unlink(missing_ok=True)
-
-            if (i + 1) % 10 == 0:
-                logger.info("Processed %d/%d frames", i + 1, len(frame_paths))
-
-        seg.free_memory()
-
-        # Combine frames back to video
-        output_filename = f"segmented_{path.stem}_{os.getpid()}.mp4"
-        output_path = video_out_dir / output_filename
-        processor.combine_frames_to_video(temp_processed, str(output_path), fps=target_fps)
-
-        # Cleanup temp frames
-        for p in temp_processed:
-            p.unlink(missing_ok=True)
-
-        elapsed = (time.time() - start) * 1000
-        logger.info("✅ Video processed: %s (%.0fms)", output_path.name, elapsed)
-
-        result = {
-            "video_url": str(output_path),
-            "video_info": video_info,
-            "frames_processed": len(temp_processed),
-            "processing_time_ms": elapsed,
+    with video_tasks_lock:
+        video_tasks[task_id] = {
+            "status": "queued",
+            "phase": "queued",
+            "filename": file.filename,
+            "total_frames": None,
+            "frames_processed": 0,
+            "video_info": None,
+            "result": None,
+            "error": None,
+            "created_at": time.time(),
+            "finished_at": None,
         }
 
-        if photo_id and background_tasks:
-            background_tasks.add_task(_post_result_to_backend, photo_id, result)
+    background_tasks.add_task(
+        _run_video_task, task_id, path, fps, overlay_alpha, photo_id
+    )
+    logger.info("Task %s queued: %s", task_id, file.filename)
 
-        path.unlink(missing_ok=True)
-        return JSONResponse(result)
+    return JSONResponse({
+        "task_id": task_id,
+        "status": "queued",
+        "status_url": f"/ai/process-video/status/{task_id}",
+        "result_url": f"/ai/process-video/result/{task_id}",
+    })
 
-    except Exception as e:
-        elapsed = (time.time() - start) * 1000
-        logger.error("❌ Video gagal: %s — %s (%.0fms)", file.filename, str(e), elapsed)
-        # Cleanup on error
-        for p in frames_dir.glob("*.jpg"):
-            p.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/ai/process-video/status/{task_id}")
+async def video_task_status(task_id: str):
+    """Poll progress untuk task video."""
+    with video_tasks_lock:
+        task = video_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    progress = None
+    if task["total_frames"] and task["total_frames"] > 0:
+        progress = round(task["frames_processed"] / task["total_frames"] * 100, 1)
+
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "phase": task["phase"],
+        "filename": task["filename"],
+        "total_frames": task["total_frames"],
+        "frames_processed": task["frames_processed"],
+        "progress_pct": progress,
+        "error": task["error"],
+    }
+
+
+@app.get("/ai/process-video/result/{task_id}")
+async def video_task_result(task_id: str):
+    """Download hasil video setelah task selesai."""
+    with video_tasks_lock:
+        task = video_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task["status"] == "processing" or task["status"] == "queued":
+        raise HTTPException(status_code=202, detail="Task still processing")
+    if task["status"] == "failed":
+        raise HTTPException(status_code=500, detail=task["error"])
+    return JSONResponse(task["result"])
 
 
 async def _post_result_to_backend(photo_id: str, result: dict):
