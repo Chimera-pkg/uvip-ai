@@ -62,7 +62,7 @@ class Dinov2Extractor:
         print(f"[DINOv2] Loading model from '{self.model_id}' ...")
         self._processor = AutoImageProcessor.from_pretrained(self.model_id)
         self._model = Dinov2Model.from_pretrained(
-            self.model_id, ignore_mismatched_sizes=True
+            self.model_id, ignore_mismatched_sizes=True, use_safetensors=True
         ).to(self._device).to(dtype=self._dtype).eval()
         # Freeze all params
         for p in self._model.parameters():
