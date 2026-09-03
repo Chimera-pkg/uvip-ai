@@ -19,10 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# PyTorch >= 2.6 build CUDA 12.1 dulu (layer cache terpisah)
-# torch >= 2.6 diperlukan untuk fix CVE-2025-32434 (torch.load vulnerability)
+# PyTorch >= 2.6 (fix CVE-2025-32434 torch.load vulnerability)
+# Pakai default PyPI — wheel dari PyPI sudah bundle CUDA runtime sendiri
 RUN pip install --upgrade pip && \
-    pip install "torch>=2.6" "torchvision>=0.21" --index-url https://download.pytorch.org/whl/cu121
+    pip install "torch>=2.6" "torchvision>=0.21"
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
