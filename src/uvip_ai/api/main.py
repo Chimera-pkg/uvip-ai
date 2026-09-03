@@ -79,6 +79,21 @@ def post_process(path: Path) -> dict:
     seg = SegformerB5(low_vram_mode=True)
     seg_res = seg.infer(masked_img)
     metrics = seg_res["metrics"]
+    seg_map = seg_res["seg_map"]
+
+    # Generate segmentation visualizations
+    from uvip_ai.pipeline.video_processor import CITYSCAPES_COLORS
+
+    # 1. Raw segmentation map (color-coded classes)
+    seg_img = np.zeros((seg_map.shape[0], seg_map.shape[1], 3), dtype=np.uint8)
+    for class_id, color in CITYSCAPES_COLORS.items():
+        mask = seg_map == class_id
+        if np.any(mask):
+            seg_img[mask] = color
+
+    # 2. Overlay (segmentation blended with original)
+    original_img = masked_img if isinstance(masked_img, np.ndarray) else cv2.imread(str(path))
+    overlay = cv2.addWeighted(original_img, 0.5, seg_img, 0.5, 0)
 
     # Step C: Feature extraction (pakai model kecil untuk CPU)
     from uvip_ai.features.dinov2 import Dinov2Extractor
@@ -128,8 +143,22 @@ def post_process(path: Path) -> dict:
     mask_path = out_dir / f"mask_{path.name}"
     cv2.imwrite(str(mask_path), masked_img if isinstance(masked_img, np.ndarray) else cv2.imread(str(path)))
 
+    # Save segmentation visualizations
+    seg_dir = Path("uploads/segmentation")
+    seg_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Raw segmentation map
+    seg_path = seg_dir / f"seg_{path.name}"
+    cv2.imwrite(str(seg_path), seg_img)
+
+    # 2. Overlay (segmentation + original)
+    overlay_path = seg_dir / f"overlay_{path.name}"
+    cv2.imwrite(str(overlay_path), overlay)
+
     return {
         "privacy_masked_url": str(mask_path),
+        "segmentation_url": str(seg_path),
+        "segmentation_overlay_url": str(overlay_path),
         "segmentation_results": {
             "green_coverage_pct": metrics["green_coverage_pct"],
             "building_coverage_pct": metrics["building_coverage_pct"],
