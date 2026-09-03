@@ -26,6 +26,7 @@ import cv2
 import fastapi
 from fastapi import File, Form, UploadFile, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # Setup logging — tampil di journalctl -u uvip -f
@@ -37,6 +38,11 @@ logging.basicConfig(
 logger = logging.getLogger("uvip_ai")
 
 app = fastapi.FastAPI(title="UVIP-AI API", version="0.1.0")
+
+# Serve static files dari uploads/
+uploads_dir = Path("uploads")
+uploads_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
 
 @app.get("/health")
