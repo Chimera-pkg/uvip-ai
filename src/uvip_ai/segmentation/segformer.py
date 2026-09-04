@@ -86,8 +86,14 @@ class SegformerB5:
         return self._processor
 
     @torch.inference_mode()
-    def infer(self, image: Image.Image | np.ndarray | str) -> dict[str, Any]:
-        """Infer segmentasi → return seg_map + 5 metrik urban."""
+    def infer(self, image: Image.Image | np.ndarray | str, max_resolution: int = 512) -> dict[str, Any]:
+        """Infer segmentasi → return seg_map + 5 metrik urban.
+
+        Args:
+            image: Input image (path, PIL, or numpy array)
+            max_resolution: Max dimension for inference (default 512). Lower = faster.
+                          Original size: 1024. Recommended: 512 for speed, 768 for accuracy.
+        """
         if isinstance(image, str):
             img = Image.open(image).convert("RGB")
         elif isinstance(image, np.ndarray):
@@ -95,13 +101,21 @@ class SegformerB5:
         else:
             img = image.copy()
 
-        inputs = self.processor(images=img, return_tensors="pt").to(self._device)
+        # Resize for faster inference (keep aspect ratio)
+        orig_w, orig_h = img.size
+        if max(orig_w, orig_h) > max_resolution:
+            scale = max_resolution / max(orig_w, orig_h)
+            new_w, new_h = int(orig_w * scale), int(orig_h * scale)
+            img_resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        else:
+            img_resized = img
+
+        inputs = self.processor(images=img_resized, return_tensors="pt").to(self._device)
         outputs = self.model(**inputs)
         logits = outputs.logits.to(torch.float32)  # back to float32 for argmax
         preds = logits.argmax(dim=1).squeeze().cpu().numpy()
 
         # Resize to original image size
-        orig_w, orig_h = img.size  # PIL size is (width, height)
         preds_resized = cv2.resize(preds, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
         seg_map = preds_resized.astype(np.uint8)
 

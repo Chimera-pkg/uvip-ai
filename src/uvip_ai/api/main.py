@@ -44,6 +44,24 @@ video_tasks: dict = {}
 video_tasks_lock = threading.Lock()
 TASK_CLEANUP_HOURS = 168  # 7 hari
 
+# ─── Model Cache (load sekali, reuse semua task) ────────────────────────────
+_seg_model_cache = None
+_seg_model_lock = threading.Lock()
+
+
+def get_seg_model():
+    """Get cached SegFormer model. Load sekali, reuse semua task."""
+    global _seg_model_cache
+    if _seg_model_cache is None:
+        with _seg_model_lock:
+            if _seg_model_cache is None:
+                from uvip_ai.segmentation.segformer import SegformerB5
+                logger.info("Loading SegFormer model (first time)...")
+                _seg_model_cache = SegformerB5(low_vram_mode=True)
+                _ = _seg_model_cache.model  # force load
+                logger.info("SegFormer model loaded and cached")
+    return _seg_model_cache
+
 
 def _cleanup_old_tasks():
     """Hapus task data yang sudah selesai lebih dari TASK_CLEANUP_HOURS."""
@@ -82,7 +100,9 @@ class ProcessRequest(BaseModel):
 
 
 def save_upload(file: UploadFile) -> Path:
-    path = Path("uploads/temp") / f"{file.filename}_{os.getpid()}"
+    stem = Path(file.filename).stem
+    suffix = Path(file.filename).suffix or ".bin"
+    path = Path("uploads/temp") / f"{stem}_{os.getpid()}{suffix}"
     path.parent.mkdir(parents=True, exist_ok=True)
     content = file.file.read()
     path.write_bytes(content)
@@ -161,28 +181,32 @@ def post_process(path: Path) -> dict:
     xgb_model.free_memory()
     explainer.free_memory()
 
-    # Save masked image
+    # Save masked image — selalu .jpg dengan timestamp unique
     out_dir = Path("uploads/masks")
     out_dir.mkdir(parents=True, exist_ok=True)
-    mask_path = out_dir / f"mask_{path.name}"
+    timestamp = int(time.time() * 1000)
+    mask_name = f"mask_{path.stem}_{timestamp}.jpg"
+    mask_path = out_dir / mask_name
     cv2.imwrite(str(mask_path), masked_img if isinstance(masked_img, np.ndarray) else cv2.imread(str(path)))
 
-    # Save segmentation visualizations
+    # Save segmentation visualizations — selalu .jpg dengan timestamp unique
     seg_dir = Path("uploads/segmentation")
     seg_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Raw segmentation map
-    seg_path = seg_dir / f"seg_{path.name}"
+    seg_name = f"seg_{path.stem}_{timestamp}.jpg"
+    seg_path = seg_dir / seg_name
     cv2.imwrite(str(seg_path), seg_img)
 
     # 2. Overlay (segmentation + original)
-    overlay_path = seg_dir / f"overlay_{path.name}"
+    overlay_name = f"overlay_{path.stem}_{timestamp}.jpg"
+    overlay_path = seg_dir / overlay_name
     cv2.imwrite(str(overlay_path), overlay)
 
     return {
-        "privacy_masked_url": str(mask_path),
-        "segmentation_url": str(seg_path),
-        "segmentation_overlay_url": str(overlay_path),
+        "privacy_masked_url": f"/uploads/masks/{mask_name}",
+        "segmentation_url": f"/uploads/segmentation/{seg_name}",
+        "segmentation_overlay_url": f"/uploads/segmentation/{overlay_name}",
         "segmentation_results": {
             "green_coverage_pct": metrics["green_coverage_pct"],
             "building_coverage_pct": metrics["building_coverage_pct"],
@@ -217,7 +241,6 @@ def _run_video_task(
 
     try:
         from uvip_ai.pipeline.video_processor import VideoProcessor
-        from uvip_ai.segmentation.segformer import SegformerB5
 
         processor = VideoProcessor()
         video_info = processor.get_video_info(str(source_path))
@@ -235,10 +258,11 @@ def _run_video_task(
             video_tasks[task_id]["total_frames"] = total_frames
             video_tasks[task_id]["phase"] = "segmentation"
 
-        # Load model once
-        seg = SegformerB5(low_vram_mode=True)
+        # Get cached model (load sekali, reuse)
+        seg = get_seg_model()
 
-        temp_processed = []
+        # Process frames in memory (avoid disk I/O)
+        processed_frames = []
         for i, frame_path in enumerate(frame_paths):
             frame = cv2.imread(str(frame_path))
             if frame is None:
@@ -248,9 +272,7 @@ def _run_video_task(
             seg_map = seg_res["seg_map"]
             overlay = processor.create_overlay(frame, seg_map, alpha=overlay_alpha)
 
-            temp_path = frames_dir / f"processed_{i:06d}.jpg"
-            cv2.imwrite(str(temp_path), overlay)
-            temp_processed.append(temp_path)
+            processed_frames.append(overlay)
             frame_path.unlink(missing_ok=True)
 
             with video_tasks_lock:
@@ -259,26 +281,34 @@ def _run_video_task(
             if (i + 1) % 10 == 0:
                 logger.info("Task %s: %d/%d frames", task_id, i + 1, total_frames)
 
-        seg.free_memory()
+        # Don't free model - keep cached for next task
 
         with video_tasks_lock:
             video_tasks[task_id]["phase"] = "combining_video"
 
+        # Write video directly from memory
         output_filename = f"segmented_{task_id}.mp4"
         output_path = video_out_dir / output_filename
-        processor.combine_frames_to_video(temp_processed, str(output_path), fps=effective_fps)
 
-        for p in temp_processed:
-            p.unlink(missing_ok=True)
+        if processed_frames:
+            h, w = processed_frames[0].shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(str(output_path), fourcc, effective_fps, (w, h))
+            try:
+                for frame in processed_frames:
+                    out.write(frame)
+            finally:
+                out.release()
+
         source_path.unlink(missing_ok=True)
 
         elapsed = (time.time() - start) * 1000
         logger.info("✅ Task %s done (%.0fms)", task_id, elapsed)
 
         result = {
-            "video_url": str(output_path),
+            "video_url": f"/uploads/videos/{output_filename}",
             "video_info": video_info,
-            "frames_processed": len(temp_processed),
+            "frames_processed": len(processed_frames),
             "processing_time_ms": elapsed,
         }
 
@@ -398,6 +428,63 @@ async def video_task_result(task_id: str):
     if task["status"] == "failed":
         raise HTTPException(status_code=500, detail=task["error"])
     return JSONResponse(task["result"])
+
+
+@app.get("/ai/process-video/tasks")
+async def list_video_tasks(status: Optional[str] = None):
+    """
+    List semua video tasks. Optional filter by status: queued, processing, completed, failed.
+
+    Response format untuk backend team:
+    - task_id: ID task
+    - status: queued | processing | completed | failed
+    - phase: extracting_frames | segmentation | combining_video | done
+    - filename: nama file original
+    - progress_pct: persentase progress (0-100)
+    - video_url: path ke hasil video (jika completed)
+    - created_at: timestamp task dibuat
+    - finished_at: timestamp task selesai
+    """
+    with video_tasks_lock:
+        tasks_copy = video_tasks.copy()
+
+    result = []
+    for task_id, task in tasks_copy.items():
+        # Filter by status jika ada
+        if status and task["status"] != status:
+            continue
+
+        progress = None
+        if task["total_frames"] and task["total_frames"] > 0:
+            progress = round(task["frames_processed"] / task["total_frames"] * 100, 1)
+
+        task_info = {
+            "task_id": task_id,
+            "status": task["status"],
+            "phase": task["phase"],
+            "filename": task["filename"],
+            "total_frames": task["total_frames"],
+            "frames_processed": task["frames_processed"],
+            "progress_pct": progress,
+            "error": task["error"],
+            "created_at": task["created_at"],
+            "finished_at": task.get("finished_at"),
+        }
+
+        # Tambahkan video_url jika completed
+        if task["status"] == "completed" and task.get("result"):
+            task_info["video_url"] = task["result"].get("video_url")
+            task_info["processing_time_ms"] = task["result"].get("processing_time_ms")
+
+        result.append(task_info)
+
+    # Sort by created_at descending (terbaru dulu)
+    result.sort(key=lambda x: x["created_at"], reverse=True)
+
+    return {
+        "total": len(result),
+        "tasks": result,
+    }
 
 
 async def _post_result_to_backend(photo_id: str, result: dict):
