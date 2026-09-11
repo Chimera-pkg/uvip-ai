@@ -535,6 +535,24 @@ async def process_photo(
         logger.error("❌ Gagal: %s — %s (%.0fms)", file.filename, str(e), elapsed)
         raise HTTPException(status_code=500, detail=str(e))
 
+# ─────────────────────────────────────────────────────────────────────────────
+# RUNPOD QUEUE SERVERLESS ROOT HANDLER (REQUIRED!)
+# ─────────────────────────────────────────────────────────────────────────────
+from fastapi.responses import JSONResponse
+
+@app.post("/")
+async def serverless_root(payload: dict = None):
+    """Root handler for RunPod Queue Serverless"""
+    if payload is None:
+        return JSONResponse(status_code=400, content={"error": "No payload"})
+    
+    try:
+        from src.uvip_ai.runpod_serverless import runpod_serverless
+        return JSONResponse(content=runpod_serverless(payload))
+    except Exception as e:
+        logger.error(f"Serverless error: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": str(e)})                                                                                
+                         
 
 if __name__ == "__main__":
     import uvicorn
