@@ -4,7 +4,7 @@ import requests
 import json
 
 ENDPOINT_ID = "46ifkgzb20xva0"
-API_KEY = "rpa_VQD77A2Z8251CZT0XFGT8LS0P0B85Y4V7EPCOZAI1r4ugr"
+API_KEY = ""
 
 url = f"https://api.runpod.ai/v2/{ENDPOINT_ID}/runsync"
 
