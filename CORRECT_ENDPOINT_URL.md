@@ -31,21 +31,7 @@ https://api.runpod.ai/v2/46ifkgzb20xva0/runsync
 
 ---
 
-## ✅ CORRECT CURL COMMAND:
 
-```bash
-curl https://api.runpod.ai/v2/46ifkgzb20xva0/runsync \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -H "Authorization: rpa_VQD77A2Z8251CZT0XFGT8LS0P0B85Y4V7EPCOZAI1r4ugr" \
-  -d '{
-    "image": "",
-    "latitude": -7.976,
-    "longitude": 112.630
-  }'
-```
-
----
 
 ## 📊 Alternative Endpoints for Queue Mode:
 
