@@ -1,0 +1,90 @@
+oh-my-posh : The term 'oh-my-posh' is not recognized as the name of a cmdlet, function, script file, or operable 
+program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+At C:\Users\ASUS\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1:1 char:1
++ oh-my-posh init pwsh --config "$HOME\.poshthemes\better-custom\better ...
++ ~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (oh-my-posh:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+
+======================================================================
+UVIP AI - Image Analysis
+======================================================================
+
+Input: data/extracted/photos/KAYUTANGAN/KAYUTANGAN_BS-04.jpg
+
+✓ Image loaded: 807x605
+
+[1/3] Running Segmentation (SegFormer-B5)...
+  [Loading SegFormer-B5 model...]
+  [Running segmentation...]
+[SegFormer] Loading model from 'nvidia/segformer-b5-finetuned-cityscapes-1024-1024' ...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/1172 [00:00<?, ?it/s]Loading weights: 100%|██████████| 1172/1172 [00:00<00:00, 21710.93it/s]
+[SegFormer] Model loaded.
+  ✓ Segmentation complete - classes found: [ 0  1  2  5  7  8 10 11 12 13 17 18]
+  Time: 19.2s
+
+[2/3] Extracting DINOv2 embeddings...
+[DINOv2] Loading model from 'facebook/dinov2-small' ...
+Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights:  32%|███▏      | 71/223 [00:00<00:00, 703.30it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 2067.40it/s]
+[DINOv2] Model loaded.
+C:\Workspace\Kerja\Wolftagon\uvip-ai\.venv\Lib\site-packages\torch\amp\autocast_mode.py:283: UserWarning: In CPU autocast, but the target dtype is not supported. Disabling autocast.
+CPU Autocast only supports dtype of torch.bfloat16, torch.float16 currently.
+  warnings.warn(error_message)
+  ✓ Extracted 384-dim embedding
+
+[3/3] Loading XGBoost models...
+  ✓ Loaded beauty_model.pkl
+  ✓ Loaded safety_model.pkl
+  ✓ Loaded comfort_model.pkl
+  ✓ Loaded uvi_model.pkl
+
+Generating predictions...
+  💎 Beauty    : 4.56/10
+  🛡️ Safety    : 2.64/10
+  😌 Comfort   : 2.87/10
+  🌡️ Uvi       : 3.83/10
+
+  Total processing time: 21.8s
+
+======================================================================
+RESULTS JSON
+======================================================================
+{
+  "image": "data/extracted/photos/KAYUTANGAN/KAYUTANGAN_BS-04.jpg",
+  "simple_features": {
+    "sky_coverage_pct": 10.0,
+    "green_coverage_pct": 5.0,
+    "building_coverage_pct": 30.0,
+    "road_coverage_pct": 25.0,
+    "sidewalk_coverage_pct": 10.0,
+    "signage_coverage_pct": 1.0,
+    "vehicle_coverage_pct": 5.0,
+    "pedestrian_coverage_pct": 2.0,
+    "street_furniture_coverage_pct": 1.0,
+    "walkability_ratio": 0.25,
+    "visual_clutter_index": 0.25,
+    "vegetation_pct": 4.0,
+    "sky_pct": 10.0
+  },
+  "dinov2_embedding_size": 384,
+  "predictions": {
+    "beauty": 4.564810276031494,
+    "safety": 2.636096477508545,
+    "comfort": 2.871612310409546,
+    "uvi": 3.83420729637146
+  },
+  "note": "Using SegFormer-B5 segmentation + XGBoost predictions"
+}
+======================================================================
+
+OUTPUT FILES:
+📁 Folder: test_outputs/
+   └── KAYUTANGAN_BS-04_masked.jpg          ← Original image
+   └── KAYUTANGAN_BS-04_segmentation.png    ← SegFormer-B5 segmentation
+       (Trotoar: Dark Gray, Jalan: Light Gray)
+   └── KAYUTANGAN_BS-04_overlay.png         ← Visualization overlay
+   └── KAYUTANGAN_BS-04_results.json        ← Complete results JSON
+======================================================================
+

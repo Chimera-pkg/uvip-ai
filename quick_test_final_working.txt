@@ -1,0 +1,433 @@
+oh-my-posh : The term 'oh-my-posh' is not recognized as the name of a cmdlet, function, script file, or operable 
+program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+At C:\Users\ASUS\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1:1 char:1
++ oh-my-posh init pwsh --config "$HOME\.poshthemes\better-custom\better ...
++ ~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (oh-my-posh:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+
+============================================================
+Testing: data\extracted\photos\KAYUTANGAN\KAYUTANGAN_ST-01.jpg
+============================================================
+
+✓ Image loaded: 1143x857
+
+[1/4] Running Privacy Guard (YOLOv8n)...
+2026-09-16 23:53:50,318 [INFO] uvip_ai.privacy.guard: Memuat model YOLO dari yolov8n.pt
+2026-09-16 23:53:50,374 [INFO] uvip_ai.privacy.guard: Model berhasil dimuat: YOLO(
+  (model): DetectionModel(
+    (model): Sequential(
+      (0): Conv(
+        (conv): Conv2d(3, 16, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        (bn): BatchNorm2d(16, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+        (act): SiLU(inplace=True)
+      )
+      (1): Conv(
+        (conv): Conv2d(16, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        (bn): BatchNorm2d(32, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+        (act): SiLU(inplace=True)
+      )
+      (2): C2f(
+        (cv1): Conv(
+          (conv): Conv2d(32, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(32, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (cv2): Conv(
+          (conv): Conv2d(48, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(32, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (m): ModuleList(
+          (0): Bottleneck(
+            (cv1): Conv(
+              (conv): Conv2d(16, 16, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(16, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (cv2): Conv(
+              (conv): Conv2d(16, 16, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(16, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+          )
+        )
+      )
+      (3): Conv(
+        (conv): Conv2d(32, 64, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+        (act): SiLU(inplace=True)
+      )
+      (4): C2f(
+        (cv1): Conv(
+          (conv): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (cv2): Conv(
+          (conv): Conv2d(128, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (m): ModuleList(
+          (0-1): 2 x Bottleneck(
+            (cv1): Conv(
+              (conv): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(32, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (cv2): Conv(
+              (conv): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(32, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+          )
+        )
+      )
+      (5): Conv(
+        (conv): Conv2d(64, 128, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+        (act): SiLU(inplace=True)
+      )
+      (6): C2f(
+        (cv1): Conv(
+          (conv): Conv2d(128, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (cv2): Conv(
+          (conv): Conv2d(256, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (m): ModuleList(
+          (0-1): 2 x Bottleneck(
+            (cv1): Conv(
+              (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (cv2): Conv(
+              (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+          )
+        )
+      )
+      (7): Conv(
+        (conv): Conv2d(128, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        (bn): BatchNorm2d(256, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+        (act): SiLU(inplace=True)
+      )
+      (8): C2f(
+        (cv1): Conv(
+          (conv): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(256, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (cv2): Conv(
+          (conv): Conv2d(384, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(256, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (m): ModuleList(
+          (0): Bottleneck(
+            (cv1): Conv(
+              (conv): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (cv2): Conv(
+              (conv): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+          )
+        )
+      )
+      (9): SPPF(
+        (cv1): Conv(
+          (conv): Conv2d(256, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (cv2): Conv(
+          (conv): Conv2d(512, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(256, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (m): MaxPool2d(kernel_size=5, stride=1, padding=2, dilation=1, ceil_mode=False)
+      )
+      (10): Upsample(scale_factor=2.0, mode='nearest')
+      (11): Concat()
+      (12): C2f(
+        (cv1): Conv(
+          (conv): Conv2d(384, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (cv2): Conv(
+          (conv): Conv2d(192, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (m): ModuleList(
+          (0): Bottleneck(
+            (cv1): Conv(
+              (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (cv2): Conv(
+              (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+          )
+        )
+      )
+      (13): Upsample(scale_factor=2.0, mode='nearest')
+      (14): Concat()
+      (15): C2f(
+        (cv1): Conv(
+          (conv): Conv2d(192, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (cv2): Conv(
+          (conv): Conv2d(96, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (m): ModuleList(
+          (0): Bottleneck(
+            (cv1): Conv(
+              (conv): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(32, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (cv2): Conv(
+              (conv): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(32, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+          )
+        )
+      )
+      (16): Conv(
+        (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+        (act): SiLU(inplace=True)
+      )
+      (17): Concat()
+      (18): C2f(
+        (cv1): Conv(
+          (conv): Conv2d(192, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (cv2): Conv(
+          (conv): Conv2d(192, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (m): ModuleList(
+          (0): Bottleneck(
+            (cv1): Conv(
+              (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (cv2): Conv(
+              (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+          )
+        )
+      )
+      (19): Conv(
+        (conv): Conv2d(128, 128, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+        (act): SiLU(inplace=True)
+      )
+      (20): Concat()
+      (21): C2f(
+        (cv1): Conv(
+          (conv): Conv2d(384, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(256, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (cv2): Conv(
+          (conv): Conv2d(384, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (bn): BatchNorm2d(256, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+          (act): SiLU(inplace=True)
+        )
+        (m): ModuleList(
+          (0): Bottleneck(
+            (cv1): Conv(
+              (conv): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (cv2): Conv(
+              (conv): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+          )
+        )
+      )
+      (22): Detect(
+        (cv2): ModuleList(
+          (0): Sequential(
+            (0): Conv(
+              (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (1): Conv(
+              (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (2): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1))
+          )
+          (1): Sequential(
+            (0): Conv(
+              (conv): Conv2d(128, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (1): Conv(
+              (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (2): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1))
+          )
+          (2): Sequential(
+            (0): Conv(
+              (conv): Conv2d(256, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (1): Conv(
+              (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (2): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1))
+          )
+        )
+        (cv3): ModuleList(
+          (0): Sequential(
+            (0): Conv(
+              (conv): Conv2d(64, 80, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(80, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (1): Conv(
+              (conv): Conv2d(80, 80, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(80, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (2): Conv2d(80, 80, kernel_size=(1, 1), stride=(1, 1))
+          )
+          (1): Sequential(
+            (0): Conv(
+              (conv): Conv2d(128, 80, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(80, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (1): Conv(
+              (conv): Conv2d(80, 80, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(80, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (2): Conv2d(80, 80, kernel_size=(1, 1), stride=(1, 1))
+          )
+          (2): Sequential(
+            (0): Conv(
+              (conv): Conv2d(256, 80, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(80, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (1): Conv(
+              (conv): Conv2d(80, 80, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+              (bn): BatchNorm2d(80, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+              (act): SiLU(inplace=True)
+            )
+            (2): Conv2d(80, 80, kernel_size=(1, 1), stride=(1, 1))
+          )
+        )
+        (dfl): DFL(
+          (conv): Conv2d(16, 1, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        )
+      )
+    )
+  )
+)
+2026-09-16 23:53:50,376 [INFO] uvip_ai.privacy.guard: Processing image: array input
+2026-09-16 23:53:53,381 [INFO] uvip_ai.privacy.guard: Processed array: 0 faces, 0 plates
+  ✓ Found 0 objects to blur
+[SegFormer] Loading model from 'nvidia/segformer-b5-finetuned-cityscapes-1024-1024' ...
+2026-09-16 23:53:59,396 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-09-16 23:53:59,668 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-09-16 23:53:59,670 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-09-16 23:53:59,700 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/2c6f153e4c23c229e2fa2b188eb250607e030cd8/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-09-16 23:53:59,965 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-09-16 23:54:00,001 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/2c6f153e4c23c229e2fa2b188eb250607e030cd8/config.json "HTTP/1.1 200 OK"
+2026-09-16 23:54:00,262 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
+2026-09-16 23:54:00,534 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/resolve/main/model.safetensors.index.json "HTTP/1.1 404 Not Found"
+2026-09-16 23:54:00,799 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/resolve/main/pytorch_model.bin "HTTP/1.1 302 Found"
+2026-09-16 23:54:01,065 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
+2026-09-16 23:54:01,321 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/nvidia/segformer-b5-finetuned-cityscapes-1024-1024 "HTTP/1.1 200 OK"
+2026-09-16 23:54:01,836 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/commits/main "HTTP/1.1 200 OK"
+Loading weights:   0%|          | 0/1172 [00:00<?, ?it/s]Loading weights: 100%|██████████| 1172/1172 [00:00<00:00, 17600.28it/s]
+[SegFormer] Model loaded.
+2026-09-16 23:54:02,329 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/discussions?p=0 "HTTP/1.1 200 OK"
+2026-09-16 23:54:02,621 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/commits/refs%2Fpr%2F3 "HTTP/1.1 200 OK"
+2026-09-16 23:54:02,905 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/resolve/refs%2Fpr%2F3/model.safetensors.index.json "HTTP/1.1 404 Not Found"
+2026-09-16 23:54:03,199 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/nvidia/segformer-b5-finetuned-cityscapes-1024-1024/resolve/refs%2Fpr%2F3/model.safetensors "HTTP/1.1 302 Found"
+  ✓ Urban Metrics:
+    - green_coverage_pct: 0.00%
+    - building_coverage_pct: 0.00%
+    - walkability_ratio: 0.00%
+    - visual_clutter_index: 0.00%
+    - sky_visibility_pct: 0.00%
+
+[3/4] Extracting Features (DINOv2)...
+2026-09-16 23:54:10,622 [INFO] uvip_ai.features.dinov2: DINOv2 model: facebook/dinov2-small (embed_dim=384, device=cpu)
+[DINOv2] Loading model from 'facebook/dinov2-small' ...
+2026-09-16 23:54:11,022 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/facebook/dinov2-small/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-09-16 23:54:11,281 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/facebook/dinov2-small/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-09-16 23:54:11,312 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/facebook/dinov2-small/ed25f3a31f01632728cabb09d1542f84ab7b0056/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-09-16 23:54:11,598 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/facebook/dinov2-small/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-09-16 23:54:11,861 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/facebook/dinov2-small/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-09-16 23:54:11,892 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/facebook/dinov2-small/ed25f3a31f01632728cabb09d1542f84ab7b0056/preprocessor_config.json "HTTP/1.1 200 OK"
+2026-09-16 23:54:12,150 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/facebook/dinov2-small/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-09-16 23:54:12,183 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/facebook/dinov2-small/ed25f3a31f01632728cabb09d1542f84ab7b0056/config.json "HTTP/1.1 200 OK"
+2026-09-16 23:54:12,459 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/facebook/dinov2-small/resolve/main/model.safetensors "HTTP/1.1 302 Found"
+Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 4311.11it/s]
+[DINOv2] Model loaded.
+C:\Workspace\Kerja\Wolftagon\uvip-ai\.venv\Lib\site-packages\torch\amp\autocast_mode.py:283: UserWarning: In CPU autocast, but the target dtype is not supported. Disabling autocast.
+CPU Autocast only supports dtype of torch.bfloat16, torch.float16 currently.
+  warnings.warn(error_message)
+  ✓ Extracted 384-dimensional embedding
+
+[4/4] Running Perception Prediction (XGBoost)...
+
+✓ Saved masked image: test_outputs\KAYUTANGAN_ST-01_masked.jpg
+Traceback (most recent call last):
+  File "C:\Workspace\Kerja\Wolftagon\uvip-ai\scripts\quick_test.py", line 308, in <module>
+    main()
+  File "C:\Workspace\Kerja\Wolftagon\uvip-ai\scripts\quick_test.py", line 304, in main
+    test_single_image(input_path, args.models)
+  File "C:\Workspace\Kerja\Wolftagon\uvip-ai\scripts\quick_test.py", line 104, in test_single_image
+    cv2.imwrite(str(mask_path), mask_colored)
+                    ^^^^^^^^^
+NameError: name 'mask_path' is not defined. Did you mean: 'masked_path'?

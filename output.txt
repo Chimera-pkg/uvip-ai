@@ -1,0 +1,15 @@
+
+======================================================================
+UVIP AI DEMO - Image Analysis
+======================================================================
+Input: data\extracted\photos\KAYUTANGAN\KAYUTANGAN_ST-01.jpg
+
+[OK] Image loaded: 1143x857 pixels
+
+[1/4] Privacy Guard (YOLOv8n)
+  Detecting faces and license plates...
+  ✓ Found 0 objects to blur
+
+[2/4] 🏙️  Urban Segmentation (SegFormer-B0)
+  Analyzing urban elements...
+[SegFormer] Loading model from 'nvidia/segformer-b0-finetuned-cityscapes-1024-1024' ...

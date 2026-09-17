@@ -1,0 +1,90 @@
+{
+  "beauty": {
+    "r2_mean": 0.9892899237579588,
+    "r2_std": 0.005220987413351054,
+    "mae_mean": 0.029527110551774476,
+    "rmse_mean": 0.048184297629461414,
+    "feature_columns": [
+      "vegetation_pct",
+      "building_pct",
+      "road_pct",
+      "sidewalk_pct",
+      "sky_pct",
+      "signage_pct",
+      "vehicle_pct",
+      "pedestrian_pct",
+      "street_furniture_pct",
+      "green_coverage_pct",
+      "building_coverage_pct",
+      "sky_visibility_pct",
+      "walkability_ratio",
+      "visual_clutter_index"
+    ]
+  },
+  "safety": {
+    "r2_mean": 0.9876904521230598,
+    "r2_std": 0.0031126382153587786,
+    "mae_mean": 0.02977246203047043,
+    "rmse_mean": 0.04510830536436981,
+    "feature_columns": [
+      "vegetation_pct",
+      "building_pct",
+      "road_pct",
+      "sidewalk_pct",
+      "sky_pct",
+      "signage_pct",
+      "vehicle_pct",
+      "pedestrian_pct",
+      "street_furniture_pct",
+      "green_coverage_pct",
+      "building_coverage_pct",
+      "sky_visibility_pct",
+      "walkability_ratio",
+      "visual_clutter_index"
+    ]
+  },
+  "comfort": {
+    "r2_mean": 0.9748549417257667,
+    "r2_std": 0.007905372265355651,
+    "mae_mean": 0.030449071020438877,
+    "rmse_mean": 0.08293819868486199,
+    "feature_columns": [
+      "vegetation_pct",
+      "building_pct",
+      "road_pct",
+      "sidewalk_pct",
+      "sky_pct",
+      "signage_pct",
+      "vehicle_pct",
+      "pedestrian_pct",
+      "street_furniture_pct",
+      "green_coverage_pct",
+      "building_coverage_pct",
+      "sky_visibility_pct",
+      "walkability_ratio",
+      "visual_clutter_index"
+    ]
+  },
+  "uvi": {
+    "r2_mean": 0.9965464630163281,
+    "r2_std": 0.0022849612908676822,
+    "mae_mean": 0.025118569951081603,
+    "rmse_mean": 0.047088561732284664,
+    "feature_columns": [
+      "vegetation_pct",
+      "building_pct",
+      "road_pct",
+      "sidewalk_pct",
+      "sky_pct",
+      "signage_pct",
+      "vehicle_pct",
+      "pedestrian_pct",
+      "street_furniture_pct",
+      "green_coverage_pct",
+      "building_coverage_pct",
+      "sky_visibility_pct",
+      "walkability_ratio",
+      "visual_clutter_index"
+    ]
+  }
+}

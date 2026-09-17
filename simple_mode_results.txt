@@ -1,0 +1,67 @@
+oh-my-posh : The term 'oh-my-posh' is not recognized as the name of a cmdlet, function, script file, or operable 
+program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+At C:\Users\ASUS\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1:1 char:1
++ oh-my-posh init pwsh --config "$HOME\.poshthemes\better-custom\better ...
++ ~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (oh-my-posh:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+
+======================================================================
+QUICK TEST SIMPLE - Direct Feature Extraction
+======================================================================
+
+Testing: data/extracted/photos/KAYUTANGAN/KAYUTANGAN_ST-01.jpg
+======================================================================
+
+✓ Image loaded: 1143x857
+
+[1/3] Extracting simple visual features...
+  Simple Features:
+    - sky_coverage_pct: 9.71
+    - green_coverage_pct: 4.85
+    - building_coverage_pct: 0.0
+    - road_coverage_pct: 0.3
+    - sidewalk_coverage_pct: 0.1
+    - signage_coverage_pct: 0.01
+    - vehicle_coverage_pct: 0.05
+    - pedestrian_coverage_pct: 0.02
+    - street_furniture_coverage_pct: 0.01
+    - walkability_ratio: 0.25
+    - visual_clutter_index: 0.2516
+    - vegetation_pct: 3.88
+    - sky_pct: 9.71
+
+[2/3] Extracting DINOv2 embeddings...
+[DINOv2] Loading model from 'facebook/dinov2-small' ...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 5640.63it/s]
+[DINOv2] Model loaded.
+C:\Workspace\Kerja\Wolftagon\uvip-ai\.venv\Lib\site-packages\torch\amp\autocast_mode.py:283: UserWarning: In CPU autocast, but the target dtype is not supported. Disabling autocast.
+CPU Autocast only supports dtype of torch.bfloat16, torch.float16 currently.
+  warnings.warn(error_message)
+  ✓ Extracted 384-dimensional embedding
+
+[3/3] Loading perception models...
+  ✓ Loaded beauty model
+  ✓ Loaded safety model
+  ✓ Loaded comfort model
+  ✓ Loaded uvi model
+
+======================================================================
+PREDICTION RESULTS
+======================================================================
+
+💎 Beauty     : 4.56/10 ░░░░░░░░░░
+
+🛡️ Safety     : 2.35/10 ░░░░░░░░░░
+
+😌 Comfort    : 3.63/10 ░░░░░░░░░░
+
+🌡️ Uvi        : 3.75/10 ░░░░░░░░░░
+
+======================================================================
+Results saved to: test_outputs_simple\KAYUTANGAN_ST-01_results.json
+Note: This uses simplified features without SegFormer segmentation
+======================================================================
+

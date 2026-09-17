@@ -1,0 +1,46 @@
+oh-my-posh : The term 'oh-my-posh' is not recognized as the name of a cmdlet, function, script file, or operable 
+program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+At C:\Users\ASUS\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1:1 char:1
++ oh-my-posh init pwsh --config "$HOME\.poshthemes\better-custom\better ...
++ ~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (oh-my-posh:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+
+======================================================================
+QUICK TEST WITH VISUALIZATION
+======================================================================
+
+Testing: data/extracted/photos/KAYUTANGAN/KAYUTANGAN_ST-01.jpg
+
+✓ Image loaded: 1143x857
+
+[1/3] Extracting features...
+  ✓ Features extracted
+[2/3] Loading perception models...
+[DINOv2] Loading model from 'facebook/dinov2-small' ...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 5830.00it/s]
+[DINOv2] Model loaded.
+C:\Workspace\Kerja\Wolftagon\uvip-ai\.venv\Lib\site-packages\torch\amp\autocast_mode.py:283: UserWarning: In CPU autocast, but the target dtype is not supported. Disabling autocast.
+CPU Autocast only supports dtype of torch.bfloat16, torch.float16 currently.
+  warnings.warn(error_message)
+  ✓ DINOv2 embedding extracted (384 dimensions)
+
+[3/3] Generating predictions...
+
+======================================================================
+RESULTS
+======================================================================
+💎 Beauty     : 4.56/10 ░░░░░░░░░░ [RED]
+🛡️ Safety     : 2.35/10 ░░░░░░░░░░ [RED]
+😌 Comfort    : 3.63/10 ░░░░░░░░░░ [RED]
+🌡️ Uvi        : 3.75/10 ░░░░░░░░░░ [RED]
+
+======================================================================
+
+✓ Saved visualization: test_outputs_simple\KAYUTANGAN_ST-01_analysis.png
+
+Results saved to: test_outputs_simple\KAYUTANGAN_ST-01_results.json
+======================================================================
+

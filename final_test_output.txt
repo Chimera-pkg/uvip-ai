@@ -1,0 +1,62 @@
+oh-my-posh : The term 'oh-my-posh' is not recognized as the name of a cmdlet, function, script file, or operable 
+program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+At C:\Users\ASUS\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1:1 char:1
++ oh-my-posh init pwsh --config "$HOME\.poshthemes\better-custom\better ...
++ ~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (oh-my-posh:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+
+======================================================================
+QUICK TEST FINAL - Complete Outputs
+======================================================================
+
+Testing: data/extracted/photos/KAYUTANGAN/KAYUTANGAN_ST-01.jpg
+
+✓ Image loaded: 1143x857
+
+[1/4] Extracting visual features...
+  ✓ Features extracted
+
+[2/4] Loading perception models...
+[DINOv2] Loading model from 'facebook/dinov2-small' ...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 5721.55it/s]
+[DINOv2] Model loaded.
+C:\Workspace\Kerja\Wolftagon\uvip-ai\.venv\Lib\site-packages\torch\amp\autocast_mode.py:283: UserWarning: In CPU autocast, but the target dtype is not supported. Disabling autocast.
+CPU Autocast only supports dtype of torch.bfloat16, torch.float16 currently.
+  warnings.warn(error_message)
+  ✓ DINOv2 embedding (384 dimensions)
+
+[3/4] Loading XGBoost models...
+    ✓ Loaded beauty_model.pkl
+    ✓ Loaded safety_model.pkl
+    ✓ Loaded comfort_model.pkl
+    ✓ Loaded uvi_model.pkl
+
+[4/4] Generating predictions...
+
+======================================================================
+RESULTS
+======================================================================
+💎 Beauty     : 4.56/10 ░░░░░░░░░░ [🔴 LOW]
+🛡️ Safety     : 2.35/10 ░░░░░░░░░░ [🔴 LOW]
+😌 Comfort    : 3.63/10 ░░░░░░░░░░ [🔴 LOW]
+🌡️ Uvi        : 3.75/10 ░░░░░░░░░░ [🔴 LOW]
+
+✓ Saved: test_outputs\KAYUTANGAN_ST-01_masked.jpg
+✓ Saved: test_outputs\KAYUTANGAN_ST-01_segmentation.png
+✓ Saved: test_outputs\KAYUTANGAN_ST-01_overlay.png
+✓ Saved: test_outputs\KAYUTANGAN_ST-01_results.json
+
+======================================================================
+OUTPUT FILES
+======================================================================
+
+📁 Folder: test_outputs/
+   └── KAYUTANGAN_ST-01_masked.jpg          ← Original image (privacy masked)
+   └── KAYUTANGAN_ST-01_segmentation.png    ← Colored segmentation map
+   └── KAYUTANGAN_ST-01_overlay.png         ← Results overlay on image
+   └── KAYUTANGAN_ST-01_results.json        ← Detailed JSON results
+======================================================================
+
