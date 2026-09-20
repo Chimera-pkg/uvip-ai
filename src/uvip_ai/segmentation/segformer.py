@@ -103,7 +103,15 @@ class SegformerB5:
         self._processor = SegformerImageProcessor.from_pretrained(self.model_id, ignore_mismatched_sizes=True)
         self._model = SegformerForSemanticSegmentation.from_pretrained(
             self.model_id, ignore_mismatched_sizes=True, weights_only=False
-        ).to(self._device).to(dtype=self._dtype).eval()
+        ).to(self._device)
+        
+        # Explicitly convert ALL parameters including biases to target dtype
+        # This prevents "Input type (float) and bias type (c10::Half) should be the same" error
+        self._model.to(dtype=self._dtype)
+        for name, param in self._model.named_parameters():
+            param.to(self._dtype)
+        
+        self._model.eval()
         print("[SegFormer] Model loaded.")
 
     @property

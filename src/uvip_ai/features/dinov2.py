@@ -63,7 +63,15 @@ class Dinov2Extractor:
         self._processor = AutoImageProcessor.from_pretrained(self.model_id)
         self._model = Dinov2Model.from_pretrained(
             self.model_id, ignore_mismatched_sizes=True, use_safetensors=True
-        ).to(self._device).to(dtype=self._dtype).eval()
+        ).to(self._device)
+        
+        # Explicitly convert ALL parameters including biases to target dtype
+        # This prevents "Input type (float) and bias type (c10::Half) should be the same" error
+        self._model.to(dtype=self._dtype)
+        for name, param in self._model.named_parameters():
+            param.to(self._dtype)
+        
+        self._model.eval()
         # Freeze all params
         for p in self._model.parameters():
             p.requires_grad_(False)
