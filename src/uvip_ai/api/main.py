@@ -343,48 +343,22 @@ async def list_video_tasks(status: Optional[str] = None):
 
     result.sort(key=lambda x: x["created_at"], reverse=True)
 
-        elapsed = (time.time() - start) * 1000
-        logger.info("✅ Task %s done (%.0fms)", task_id, elapsed)
+async def _post_result_to_backend(photo_id: str, result: dict):
+    """Kirim hasil segmentasi ke backend-uvip untuk disimpan ke DB."""
+    from uvip_ai.config import settings
+    if not settings.uvip_api_base_url or not photo_id:
+        return
 
-        result = {
-            "video_url": f"/uploads/videos/{output_filename}",
-            "video_info": video_info,
-            "frames_processed": len(processed_frames),
-            "processing_time_ms": elapsed,
-        }
-
-        with video_tasks_lock:
-            video_tasks[task_id].update({
-                "status": "completed",
-                "phase": "done",
-                "result": result,
-                "finished_at": time.time(),
-            })
-
-        if photo_id:
-            try:
-                import httpx
-                with httpx.Client(timeout=10.0) as client:
-                    client.post(
-                        os.environ.get("BACKEND_URL", "http://localhost:8000")
-                        + "/api/ai/video-result",
-                        json={"photo_id": photo_id, **result},
-                    )
-            except Exception as cb_err:
-                logger.warning("Callback failed for task %s: %s", task_id, cb_err)
-
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            await client.post(
+                f"{settings.uvip_api_base_url}/segmentation-results/",
+                json={"photo_id": photo_id, **result},
+                headers={"Authorization": f"Bearer {settings.uvip_api_token}"} if settings.uvip_api_token else {},
+            )
+            logger.info("📤 Callback ke backend berhasil: photo_id=%s", photo_id)
     except Exception as e:
-        elapsed = (time.time() - start) * 1000
-        logger.error("❌ Task %s gagal: %s (%.0fms)", task_id, str(e), elapsed)
-        for p in frames_dir.glob("*.jpg"):
-            p.unlink(missing_ok=True)
-        source_path.unlink(missing_ok=True)
-        with video_tasks_lock:
-            video_tasks[task_id].update({
-                "status": "failed",
-                "error": str(e),
-                "finished_at": time.time(),
-            })
+        logger.error("❌ Callback ke backend gagal: %s", e)
 
 
 @app.post("/ai/process")
@@ -416,12 +390,6 @@ async def process_photo(
         elapsed = (time.time() - start) * 1000
         logger.error("❌ Gagal: %s — %s (%.0fms)", file.filename, str(e), elapsed)
         raise HTTPException(status_code=500, detail=str(e))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RUNPOD QUEUE SERVERLESS ROOT HANDLER (REQUIRED!)
-# ─────────────────────────────────────────────────────────────────────────────
-from fastapi.responses import JSONResponse
-
 @app.post("/")
 async def serverless_root(payload: dict = None):
     """Root handler for RunPod Queue Serverless"""
