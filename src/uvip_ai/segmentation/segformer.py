@@ -152,10 +152,15 @@ class SegformerB5:
             img_resized = img
 
         inputs = self.processor(images=img_resized, return_tensors="pt").to(self._device)
+        # Convert inputs to match model dtype (fix: Input type (float) and bias type (c10::Half))
+        for name, param in inputs.items():
+            if isinstance(param, torch.Tensor):
+                inputs[name] = param.to(self._dtype)
+
         outputs = self.model(**inputs)
         logits = outputs.logits.to(torch.float32)  # back to float32 for argmax
         preds = logits.argmax(dim=1).squeeze().cpu().numpy()
-
+        
         # Resize to original image size
         preds_resized = cv2.resize(preds, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
         seg_map = preds_resized.astype(np.uint8)
@@ -168,18 +173,18 @@ class SegformerB5:
         # Map class IDs ke class names menggunakan CLASS_MAP
         pct_by_class = {}
         for class_id, pct_val in enumerate(pct_array):
-            # Dapatkan nama class dari model config
             if hasattr(self.model.config, 'id2label') and class_id in self.model.config.id2label:
                 class_name = self.model.config.id2label[class_id].lower()
-                # Map ke category menggunakan CLASS_MAP
                 category = self.CLASS_MAP.get(class_name, class_name)
-                # Akumulasi persentase per category
+                if category not in pct_by_class:
+                    pct_by_class[category] = 0
+                pct_by_class[category] += float(pct_val)
+        
         # Calculate metrics based on mode
         if excel_mode:
             metrics = self._compute_excel_metrics(pct_by_class, seg_map)
         else:
             metrics = self._compute_metrics(pct_by_class, seg_map)
-        
         return {"seg_map": seg_map, "metrics": metrics, "pct_by_class": pct_by_class}
 
     def _compute_metrics(self, pct_by_class: dict, seg_map: np.ndarray) -> dict:
