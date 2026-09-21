@@ -21,7 +21,7 @@ from typing import Dict, Optional, Any
 from fastapi import BackgroundTasks
 
 import fastapi
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
