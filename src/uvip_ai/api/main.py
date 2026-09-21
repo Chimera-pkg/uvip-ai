@@ -119,6 +119,8 @@ def post_process(path: Path) -> dict:
             "class_count": len(np.unique(seg_map)),
         }
     except Exception as e:
+        logger.error("Processing error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _run_video_task(
