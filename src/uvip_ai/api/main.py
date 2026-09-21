@@ -1,15 +1,7 @@
-"""
-FastAPI Endpoint — Integrasi UVIP AI Pipeline (Step 8).
+"""UVIP-AI API server - process foto/video dengan AI segmentation."""
 
-POST /ai/process → upload foto + GPS → return:
-  - privacy_masked_url (path ke hasil blur)
-  - segmentation_results (5 metrik urban)
-  - perception_prediction (Beauty/Safety/Comfort/UVI)
-  - shap_values (faktor pendorong Indonesia)
+from __future__ import annotations
 
-Endpoint ini dipanggil oleh WebSocket handler saat foto masuk dari mobile.
-Target latency < 700ms (Step 9).
-"""
 import sys
 from pathlib import Path
 
@@ -18,32 +10,27 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from __future__ import annotations
-
 import logging
 import os
 import shutil
-import threading
 import time
+import threading
 import uuid
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Dict, Optional, Any
+from fastapi import BackgroundTasks
 
-import httpx
-import numpy as np
-import cv2
 import fastapi
-from fastapi import File, Form, UploadFile, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import httpx
 
 # Setup logging — tampil di journalctl -u uvip -f
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+    format="%(asctime)s %(levelname)s: %(message)s"
 )
 logger = logging.getLogger("uvip_ai")
 
@@ -52,39 +39,28 @@ video_tasks: dict = {}
 video_tasks_lock = threading.Lock()
 TASK_CLEANUP_HOURS = 168  # 7 hari
 
-# ─── Model Cache (load sekali, reuse semua task) ────────────────────────────
-_seg_model_cache = None
-_seg_model_lock = threading.Lock()
-
-
 def get_seg_model():
     """Get cached SegFormer model. Load sekali, reuse semua task."""
     global _seg_model_cache
     if _seg_model_cache is None:
-        with _seg_model_lock:
-            if _seg_model_cache is None:
-                from uvip_ai.segmentation.segformer import SegformerB5
-                logger.info("Loading SegFormer model (first time)...")
-                _seg_model_cache = SegformerB5(low_vram_mode=True)
-                _ = _seg_model_cache.model  # force load
-                logger.info("SegFormer model loaded and cached")
+        logger.info("Loading SegFormer model...")
+        from src.uvip_ai.api.domain.segmentasi.segformer import get_segformer_models
+        _seg_model_cache = get_segformer_models()
+        logger.info("Model loaded successfully")
     return _seg_model_cache
 
 
 def _cleanup_old_tasks():
     """Hapus task data yang sudah selesai lebih dari TASK_CLEANUP_HOURS."""
-    now = time.time()
-    cutoff = now - (TASK_CLEANUP_HOURS * 3600)
-    with video_tasks_lock:
-        expired = [
-            tid for tid, t in video_tasks.items()
-            if t.get("finished_at") and t["finished_at"] < cutoff
-        ]
-        for tid in expired:
-            task = video_tasks.pop(tid)
-            task_dir = Path("uploads/tasks") / tid
-            shutil.rmtree(task_dir, ignore_errors=True)
-            logger.info("Cleaned up old task: %s", tid)
+    now = datetime.utcnow()
+    to_remove = [
+        tid for tid, tdata in video_tasks.items()
+        if tdata["status"] in ["finished", "failed"]
+        and (now - tdata["started_at"]) > timedelta(hours=TASK_CLEANUP_HOURS)
+    ]
+    for tid in to_remove:
+        del video_tasks[tid]
+        logger.info("Cleaned up old task: %s", tid)
 
 
 app = fastapi.FastAPI(title="UVIP-AI API", version="0.1.0")
@@ -102,138 +78,36 @@ async def health():
 
 class ProcessRequest(BaseModel):
     """Payload request (jika bukan multipart)."""
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+
+    url: Optional[str] = None
     is_offline_sync: bool = False
 
 
 def save_upload(file: UploadFile) -> Path:
     stem = Path(file.filename).stem
-    suffix = Path(file.filename).suffix or ".bin"
-    path = Path("uploads/temp") / f"{stem}_{os.getpid()}{suffix}"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    content = file.file.read()
-    path.write_bytes(content)
+    path = uploads_dir / f"{stem}_{uuid.uuid4()}{Path(file.filename).suffix}"
+    file.file.seek(0)
+    with open(path, "wb") as f:
+        content = file.file.read()
+        f.write(content)
     return path
 
 
 def post_process(path: Path) -> dict:
     """Run full pipeline AI pada foto → return unified result."""
-    # Step A: Privacy Guard — PrivacyGuard tidak punya low_vram_mode, gunakan default
-    from uvip_ai.privacy.guard import PrivacyGuard
-    guard = PrivacyGuard()
-    guard_result = guard.process_image(str(path))
-    masked_img = guard_result["blurred_image"]   # np.ndarray BGR
-    boxes = guard_result.get("detections", [])
+    try:
+        from src.uvip_ai.api.domain.segmentasi.runner import run_full_pipeline
 
-    # Step B: Segmentation
-    from uvip_ai.segmentation.segformer import SegformerB5
-    seg = SegformerB5(low_vram_mode=True)
-    seg_res = seg.infer(masked_img)
-    metrics = seg_res["metrics"]
-    seg_map = seg_res["seg_map"]
-
-    # Generate segmentation visualizations
-    from uvip_ai.pipeline.video_processor import CITYSCAPES_COLORS
-
-    # 1. Raw segmentation map (color-coded classes)
-    seg_img = np.zeros((seg_map.shape[0], seg_map.shape[1], 3), dtype=np.uint8)
-    for class_id, color in CITYSCAPES_COLORS.items():
-        mask = seg_map == class_id
-        if np.any(mask):
-            seg_img[mask] = color
-
-    # 2. Overlay (segmentation blended with original)
-    original_img = masked_img if isinstance(masked_img, np.ndarray) else cv2.imread(str(path))
-    overlay = cv2.addWeighted(original_img, 0.5, seg_img, 0.5, 0)
-
-    # Step C: Feature extraction (pakai model kecil untuk CPU)
-    from uvip_ai.features.dinov2 import Dinov2Extractor
-    from uvip_ai.config import settings
-    feat_model = Dinov2Extractor(model_id=settings.dinov2_model, low_vram_mode=True)
-    emb = feat_model.extract(str(path))
-    logger.info("DINOv2 embedding: shape=%s", emb.shape)
-
-    # Step D: XGBoost prediction
-    from uvip_ai.training.xgboost_model import XGBoostPerceptionModel
-    xgb_model = XGBoostPerceptionModel(model_path=settings.xgboost_model_path)
-    predictions = xgb_model.predict(metrics, embedding=emb)
-    logger.info("XGBoost predictions: %s", predictions)
-
-    # Step E: SHAP explainability
-    from uvip_ai.explain.shap_explain import ShapExplainer
-    explainer = ShapExplainer(model_path=settings.xgboost_model_path)
-    feature_names = [
-        "green_coverage_pct",
-        "building_coverage_pct",
-        "walkability_ratio",
-        "visual_clutter_index",
-        "sky_visibility_pct",
-    ]
-    # Gabungkan metrik + embedding untuk SHAP
-    features_for_shap = np.array([
-        metrics["green_coverage_pct"],
-        metrics["building_coverage_pct"],
-        metrics["walkability_ratio"],
-        metrics["visual_clutter_index"],
-        metrics["sky_visibility_pct"],
-    ])
-    if emb is not None:
-        features_for_shap = np.concatenate([features_for_shap, emb.flatten()])
-    explanations = explainer.explain(features_for_shap, feature_names=feature_names)
-    logger.info("SHAP explanations: %d features", len(explanations))
-
-    # Cleanup
-    seg.free_memory()
-    feat_model.free_memory()
-    xgb_model.free_memory()
-    explainer.free_memory()
-
-    # Save masked image — selalu .jpg dengan timestamp unique
-    out_dir = Path("uploads/masks")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = int(time.time() * 1000)
-    mask_name = f"mask_{path.stem}_{timestamp}.jpg"
-    mask_path = out_dir / mask_name
-    cv2.imwrite(str(mask_path), masked_img if isinstance(masked_img, np.ndarray) else cv2.imread(str(path)))
-
-    # Save segmentation visualizations — selalu .jpg dengan timestamp unique
-    seg_dir = Path("uploads/segmentation")
-    seg_dir.mkdir(parents=True, exist_ok=True)
-
-    # 1. Raw segmentation map
-    seg_name = f"seg_{path.stem}_{timestamp}.jpg"
-    seg_path = seg_dir / seg_name
-    cv2.imwrite(str(seg_path), seg_img)
-
-    # 2. Overlay (segmentation + original)
-    overlay_name = f"overlay_{path.stem}_{timestamp}.jpg"
-    overlay_path = seg_dir / overlay_name
-    cv2.imwrite(str(overlay_path), overlay)
-
-    return {
-        "privacy_masked_url": f"/uploads/masks/{mask_name}",
-        "segmentation_url": f"/uploads/segmentation/{seg_name}",
-        "segmentation_overlay_url": f"/uploads/segmentation/{overlay_name}",
-        "segmentation_results": {
-            "green_coverage_pct": metrics["green_coverage_pct"],
-            "building_coverage_pct": metrics["building_coverage_pct"],
-            "walkability_ratio": metrics["walkability_ratio"],
-            "visual_clutter_index": metrics["visual_clutter_index"],
-            "sky_visibility_pct": metrics["sky_visibility_pct"],
-        },
-        "perception_prediction": predictions,
-        "shap_values": explanations,
-    }
+        result = run_full_pipeline(str(path))
+        return {"result": result}
+    except Exception as e:
+        logger.error("Processing error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _run_video_task(
-    task_id: str,
-    source_path: Path,
-    target_fps: float,
-    overlay_alpha: float,
-    photo_id: Optional[str],
-):
+    task_id: str, source_path: Path, target_fps: float, overlay_alpha: float, photo_id: Optional[str],
+) -> None:
     """Background worker: process video frames + segmentation."""
     start = time.time()
     task_dir = Path("uploads/tasks") / task_id
@@ -362,10 +236,7 @@ async def process_video(
     overlay_alpha: float = Form(0.5),
     background_tasks: BackgroundTasks = None,
 ):
-    """
-    Process video → segmentation overlay (async).
-    Return task_id immediately, poll /ai/process-video/status/{task_id} for progress.
-    """
+    """Process video → segmentation overlay (async). Return task_id immediately, poll /ai/process-video/status/{task_id} for progress."""
     import asyncio
 
     _cleanup_old_tasks()
@@ -387,9 +258,7 @@ async def process_video(
             "finished_at": None,
         }
 
-    background_tasks.add_task(
-        _run_video_task, task_id, path, fps, overlay_alpha, photo_id
-    )
+    background_tasks.add_task(_run_video_task, task_id, path, fps, overlay_alpha, photo_id)
     logger.info("Task %s queued: %s", task_id, file.filename)
 
     return JSONResponse({
@@ -440,25 +309,12 @@ async def video_task_result(task_id: str):
 
 @app.get("/ai/process-video/tasks")
 async def list_video_tasks(status: Optional[str] = None):
-    """
-    List semua video tasks. Optional filter by status: queued, processing, completed, failed.
-
-    Response format untuk backend team:
-    - task_id: ID task
-    - status: queued | processing | completed | failed
-    - phase: extracting_frames | segmentation | combining_video | done
-    - filename: nama file original
-    - progress_pct: persentase progress (0-100)
-    - video_url: path ke hasil video (jika completed)
-    - created_at: timestamp task dibuat
-    - finished_at: timestamp task selesai
-    """
+    """List semua video tasks. Optional filter by status: queued, processing, completed, failed."""
     with video_tasks_lock:
         tasks_copy = video_tasks.copy()
 
     result = []
     for task_id, task in tasks_copy.items():
-        # Filter by status jika ada
         if status and task["status"] != status:
             continue
 
@@ -479,38 +335,102 @@ async def list_video_tasks(status: Optional[str] = None):
             "finished_at": task.get("finished_at"),
         }
 
-        # Tambahkan video_url jika completed
         if task["status"] == "completed" and task.get("result"):
             task_info["video_url"] = task["result"].get("video_url")
             task_info["processing_time_ms"] = task["result"].get("processing_time_ms")
 
         result.append(task_info)
 
-    # Sort by created_at descending (terbaru dulu)
     result.sort(key=lambda x: x["created_at"], reverse=True)
 
-    return {
-        "total": len(result),
-        "tasks": result,
-    }
+    return {"total": len(result), "tasks": result}
 
+        # Get cached model (load sekali, reuse)
+        seg = get_seg_model()
 
-async def _post_result_to_backend(photo_id: str, result: dict):
-    """Kirim hasil segmentasi ke backend-uvip untuk disimpan ke DB."""
-    from uvip_ai.config import settings
-    if not settings.uvip_api_base_url or not photo_id:
-        return
+        # Process frames in memory (avoid disk I/O)
+        processed_frames = []
+        for i, frame_path in enumerate(frame_paths):
+            frame = cv2.imread(str(frame_path))
+            if frame is None:
+                continue
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            await client.post(
-                f"{settings.uvip_api_base_url}/segmentation-results/",
-                json={"photo_id": photo_id, **result},
-                headers={"Authorization": f"Bearer {settings.uvip_api_token}"} if settings.uvip_api_token else {},
-            )
-            logger.info("📤 Callback ke backend berhasil: photo_id=%s", photo_id)
+            seg_res = seg.infer(frame)
+            seg_map = seg_res["seg_map"]
+            overlay = processor.create_overlay(frame, seg_map, alpha=overlay_alpha)
+
+            processed_frames.append(overlay)
+            frame_path.unlink(missing_ok=True)
+
+            with video_tasks_lock:
+                video_tasks[task_id]["frames_processed"] = i + 1
+
+            if (i + 1) % 10 == 0:
+                logger.info("Task %s: %d/%d frames", task_id, i + 1, total_frames)
+
+        # Don't free model - keep cached for next task
+
+        with video_tasks_lock:
+            video_tasks[task_id]["phase"] = "combining_video"
+
+        # Write video directly from memory
+        output_filename = f"segmented_{task_id}.mp4"
+        output_path = video_out_dir / output_filename
+
+        if processed_frames:
+            h, w = processed_frames[0].shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(str(output_path), fourcc, effective_fps, (w, h))
+            try:
+                for frame in processed_frames:
+                    out.write(frame)
+            finally:
+                out.release()
+
+        source_path.unlink(missing_ok=True)
+
+        elapsed = (time.time() - start) * 1000
+        logger.info("✅ Task %s done (%.0fms)", task_id, elapsed)
+
+        result = {
+            "video_url": f"/uploads/videos/{output_filename}",
+            "video_info": video_info,
+            "frames_processed": len(processed_frames),
+            "processing_time_ms": elapsed,
+        }
+
+        with video_tasks_lock:
+            video_tasks[task_id].update({
+                "status": "completed",
+                "phase": "done",
+                "result": result,
+                "finished_at": time.time(),
+            })
+
+        if photo_id:
+            try:
+                import httpx
+                with httpx.Client(timeout=10.0) as client:
+                    client.post(
+                        os.environ.get("BACKEND_URL", "http://localhost:8000")
+                        + "/api/ai/video-result",
+                        json={"photo_id": photo_id, **result},
+                    )
+            except Exception as cb_err:
+                logger.warning("Callback failed for task %s: %s", task_id, cb_err)
+
     except Exception as e:
-        logger.error("❌ Callback ke backend gagal: %s", e)
+        elapsed = (time.time() - start) * 1000
+        logger.error("❌ Task %s gagal: %s (%.0fms)", task_id, str(e), elapsed)
+        for p in frames_dir.glob("*.jpg"):
+            p.unlink(missing_ok=True)
+        source_path.unlink(missing_ok=True)
+        with video_tasks_lock:
+            video_tasks[task_id].update({
+                "status": "failed",
+                "error": str(e),
+                "finished_at": time.time(),
+            })
 
 
 @app.post("/ai/process")
