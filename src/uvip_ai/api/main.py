@@ -39,6 +39,8 @@ logger = logging.getLogger("uvip_ai")
 video_tasks: dict = {}
 video_tasks_lock = threading.Lock()
 TASK_CLEANUP_HOURS = 168  # 7 hari
+_seg_model_cache = None  # Model cache (loaded once, reused for all tasks)
+
 def get_seg_model():
     """Get cached SegFormer model. Load sekali, reuse semua task."""
     global _seg_model_cache
@@ -48,7 +50,6 @@ def get_seg_model():
         _seg_model_cache = SegformerB5()
         logger.info("Model loaded successfully")
     return _seg_model_cache
-
 
 def _cleanup_old_tasks():
     """Hapus task data yang sudah selesai lebih dari TASK_CLEANUP_HOURS."""
