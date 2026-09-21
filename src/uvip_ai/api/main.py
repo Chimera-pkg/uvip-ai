@@ -38,14 +38,13 @@ logger = logging.getLogger("uvip_ai")
 video_tasks: dict = {}
 video_tasks_lock = threading.Lock()
 TASK_CLEANUP_HOURS = 168  # 7 hari
-
 def get_seg_model():
     """Get cached SegFormer model. Load sekali, reuse semua task."""
     global _seg_model_cache
     if _seg_model_cache is None:
         logger.info("Loading SegFormer model...")
-        from src.uvip_ai.api.domain.segmentasi.segformer import get_segformer_models
-        _seg_model_cache = get_segformer_models()
+        from uvip_ai.segmentation.segformer import SegformerB5
+        _seg_model_cache = SegformerB5()
         logger.info("Model loaded successfully")
     return _seg_model_cache
 
@@ -96,13 +95,30 @@ def save_upload(file: UploadFile) -> Path:
 def post_process(path: Path) -> dict:
     """Run full pipeline AI pada foto → return unified result."""
     try:
-        from src.uvip_ai.api.domain.segmentasi.runner import run_full_pipeline
-
-        result = run_full_pipeline(str(path))
-        return {"result": result}
+        import numpy as np
+        from uvip_ai.segmentation.segformer import SegformerB5
+        
+        # Load model
+        seg = SegformerB5(low_vram_mode=True)
+        image = cv2.imread(str(path))
+        if image is None:
+            raise ValueError(f"Cannot read image: {path}")
+        
+        # Run inference
+        result = seg.infer(image, excel_mode=True)
+        
+        # Prepare output
+        metrics = result["metrics"]
+        seg_map = result["seg_map"]
+        
+        logger.info("✅ Segmentation complete")
+        
+        return {
+            "metrics": metrics,
+            "seg_map_shape": seg_map.shape,
+            "class_count": len(np.unique(seg_map)),
+        }
     except Exception as e:
-        logger.error("Processing error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _run_video_task(
