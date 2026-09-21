@@ -18,6 +18,7 @@ import threading
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
+import cv2  # OpenCV for image processing
 from fastapi import BackgroundTasks
 
 import fastapi
