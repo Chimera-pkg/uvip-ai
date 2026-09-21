@@ -343,52 +343,6 @@ async def list_video_tasks(status: Optional[str] = None):
 
     result.sort(key=lambda x: x["created_at"], reverse=True)
 
-    return {"total": len(result), "tasks": result}
-
-        # Get cached model (load sekali, reuse)
-        seg = get_seg_model()
-
-        # Process frames in memory (avoid disk I/O)
-        processed_frames = []
-        for i, frame_path in enumerate(frame_paths):
-            frame = cv2.imread(str(frame_path))
-            if frame is None:
-                continue
-
-            seg_res = seg.infer(frame)
-            seg_map = seg_res["seg_map"]
-            overlay = processor.create_overlay(frame, seg_map, alpha=overlay_alpha)
-
-            processed_frames.append(overlay)
-            frame_path.unlink(missing_ok=True)
-
-            with video_tasks_lock:
-                video_tasks[task_id]["frames_processed"] = i + 1
-
-            if (i + 1) % 10 == 0:
-                logger.info("Task %s: %d/%d frames", task_id, i + 1, total_frames)
-
-        # Don't free model - keep cached for next task
-
-        with video_tasks_lock:
-            video_tasks[task_id]["phase"] = "combining_video"
-
-        # Write video directly from memory
-        output_filename = f"segmented_{task_id}.mp4"
-        output_path = video_out_dir / output_filename
-
-        if processed_frames:
-            h, w = processed_frames[0].shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out = cv2.VideoWriter(str(output_path), fourcc, effective_fps, (w, h))
-            try:
-                for frame in processed_frames:
-                    out.write(frame)
-            finally:
-                out.release()
-
-        source_path.unlink(missing_ok=True)
-
         elapsed = (time.time() - start) * 1000
         logger.info("✅ Task %s done (%.0fms)", task_id, elapsed)
 
