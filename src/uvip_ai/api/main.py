@@ -94,10 +94,11 @@ def save_upload(file: UploadFile) -> Path:
 
 
 def post_process(path: Path) -> dict:
-    """Run full pipeline AI pada foto → return unified result."""
+    """Run full pipeline AI pada foto → return unified result with saved files."""
     try:
         import numpy as np
         from uvip_ai.segmentation.segformer import SegformerB5
+        from uvip_ai.pipeline.video_processor import CITYSCAPES_COLORS
         
         # Load model
         seg = SegformerB5(low_vram_mode=True)
@@ -112,17 +113,47 @@ def post_process(path: Path) -> dict:
         metrics = result["metrics"]
         seg_map = result["seg_map"]
         
+        # Save segmentation visualization
+        seg_dir = Path("uploads") / "segmentation"
+        seg_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = int(time.time() * 1000)
+        
+        # Color-coded segmentation map
+        seg_img = np.zeros((seg_map.shape[0], seg_map.shape[1], 3), dtype=np.uint8)
+        for class_id, color in CITYSCAPES_COLORS.items():
+            mask = seg_map == class_id
+            if np.any(mask):
+                seg_img[mask] = color
+        
+        # Save seg_map image
+        seg_path = seg_dir / f"seg_{Path(path).stem}_{timestamp}.jpg"
+        cv2.imwrite(str(seg_path), seg_img)
+        logger.info("💾 Segmentation saved: %s", seg_path)
+        
+        # Also save metrics as JSON
+        json_dir = Path("uploads") / "results"
+        json_dir.mkdir(parents=True, exist_ok=True)
+        import json
+        json_path = json_dir / f"result_{Path(path).stem}_{timestamp}.json"
+        with open(json_path, 'w') as f:
+            json.dump({
+                "source_image": path.name,
+                "metrics": metrics,
+                "seg_map_shape": list(seg_map.shape),
+                "class_count": len(np.unique(seg_map)),
+            }, f, indent=2)
+        logger.info("📄 Metrics saved: %s", json_path)
+        
         logger.info("✅ Segmentation complete")
         
         return {
             "metrics": metrics,
-            "seg_map_shape": seg_map.shape,
-            "class_count": len(np.unique(seg_map)),
+            "seg_map_url": f"/uploads/segmentation/{seg_path.name}",
+            "result_json_url": f"/uploads/results/{json_path.name}",
         }
     except Exception as e:
         logger.error("Processing error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
-
 
 def _run_video_task(
     task_id: str, source_path: Path, target_fps: float, overlay_alpha: float, photo_id: Optional[str],
