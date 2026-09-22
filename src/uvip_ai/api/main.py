@@ -93,13 +93,14 @@ def save_upload(file: UploadFile) -> Path:
         f.write(content)
     return path
 
-
 def post_process(path: Path) -> dict:
     """Run full pipeline AI pada foto → return unified result with saved files."""
+    start_time = time.time()
     try:
         import numpy as np
         from uvip_ai.segmentation.segformer import SegformerB5
         from uvip_ai.pipeline.video_processor import CITYSCAPES_COLORS
+        from PIL import Image as PILImage
         
         # Load model
         seg = SegformerB5(low_vram_mode=True)
@@ -113,170 +114,98 @@ def post_process(path: Path) -> dict:
         # Prepare output
         metrics = result["metrics"]
         seg_map = result["seg_map"]
+        pct_by_class = result.get("pct_by_class", {})
         
-        # Save segmentation visualization
+        # Save segmentation visualization and mask
         seg_dir = Path("uploads") / "segmentation"
         seg_dir.mkdir(parents=True, exist_ok=True)
+        masks_dir = Path("uploads") / "masks"
+        masks_dir.mkdir(parents=True, exist_ok=True)
         timestamp = int(time.time() * 1000)
+        file_stem = Path(path).stem
         
-        # Color-coded segmentation map
+        # Color-coded segmentation map (BGR to RGB)
         seg_img = np.zeros((seg_map.shape[0], seg_map.shape[1], 3), dtype=np.uint8)
         for class_id, color in CITYSCAPES_COLORS.items():
             mask = seg_map == class_id
             if np.any(mask):
                 seg_img[mask] = color
         
-        # Save seg_map image
-        seg_path = seg_dir / f"seg_{Path(path).stem}_{timestamp}.jpg"
-        cv2.imwrite(str(seg_path), seg_img)
+        pil_seg = PILImage.fromarray(seg_img[..., ::-1])  # BGR to RGB
+        seg_path = seg_dir / f"seg_{file_stem}_{timestamp}.jpg"
+        pil_seg.save(str(seg_path))
         logger.info("💾 Segmentation saved: %s", seg_path)
         
-        # Also save metrics as JSON
-        json_dir = Path("uploads") / "results"
-        json_dir.mkdir(parents=True, exist_ok=True)
-        import json
-        json_path = json_dir / f"result_{Path(path).stem}_{timestamp}.json"
-        with open(json_path, 'w') as f:
-            json.dump({
-                "source_image": path.name,
-                "metrics": metrics,
+        # Create privacy masked version (blur non-road areas)
+        mask_indices = np.isin(seg_map, [0, 1, 2, 6, 7, 8])  # road, sidewalk, building, wall, fence, pole
+        masked_image = image.copy()
+        masked_image[~mask_indices] = cv2.GaussianBlur(image[~mask_indices], (5, 5), 0)
+        mask_path = masks_dir / f"mask_{file_stem}_{timestamp}.jpg"
+        cv2.imwrite(str(mask_path), masked_image)
+        logger.info("🛡️ Privacy mask saved: %s", mask_path)
+        
+        # Create overlay (original + segmentation blend)
+        original_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        overlay = cv2.addWeighted(original_rgb, 0.6, seg_img[..., ::-1], 0.4, 0)
+        overlay_path = seg_dir / f"overlay_{file_stem}_{timestamp}.jpg"
+        pil_overlay = PILImage.fromarray(overlay)
+        pil_overlay.save(str(overlay_path))
+        logger.info("🎨 Overlay saved: %s", overlay_path)
+        
+        # Calculate perception predictions
+        green_pct = pct_by_class.get('vegetation', 0) + pct_by_class.get('tree', 0)
+        building_pct = pct_by_class.get('building', 0)
+        road_pct = pct_by_class.get('road', 0)
+        sky_pct = pct_by_class.get('sky', 0)
+        sidewalk_pct = pct_by_class.get('sidewalk', 0)
+        
+        beauty_score = min(10, max(0, (green_pct * 0.3) + (sky_pct * 0.4) + (2 if building_pct > 30 else 0)))
+        safety_score = min(10, max(0, (sidewalk_pct * 2) + (road_pct * 0.5)))
+        comfort_score = min(10, max(0, (green_pct * 0.5) + (sky_pct * 0.5)))
+        uvi_score = (beauty_score / 10) * 0.4 + (safety_score / 10) * 0.3 + (comfort_score / 10) * 0.3
+        
+        # Build response matching expected backend format
+        result_response = {
+            "privacy_masked_url": f"/uploads/masks/{mask_path.name}",
+            "segmentation_url": f"/uploads/segmentation/{seg_path.name}",
+            "segmentation_overlay_url": f"/uploads/segmentation/{overlay_path.name}",
+            "segmentation_results": {
+                "green_coverage_pct": round(pct_by_class.get('vegetation', 0) + pct_by_class.get('tree', 0), 4),
+                "building_coverage_pct": round(building_pct, 4),
+                "walkability_ratio": round(sidewalk_pct / (road_pct + sidewalk_pct + 0.01), 4),
+                "visual_clutter_index": round(1 - (green_pct / 100), 4),
+                "sky_visibility_pct": round(sky_pct, 4),
+            },
+            "perception_prediction": {
+                "beauty_score": round(beauty_score, 2),
+                "safety_score": round(safety_score, 2),
+                "comfort_score": round(comfort_score, 2),
+                "uvi_score": round(uvi_score, 2),
+            },
+            "shap_values": [],
+            "metrics_source": {
+                "pct_by_class": {k: round(v, 2) for k, v in pct_by_class.items()},
                 "seg_map_shape": list(seg_map.shape),
                 "class_count": len(np.unique(seg_map)),
-            }, f, indent=2)
-        logger.info("📄 Metrics saved: %s", json_path)
-        
-        logger.info("✅ Segmentation complete")
-        
-        return {
-            "metrics": metrics,
-            "seg_map_url": f"/uploads/segmentation/{seg_path.name}",
-            "result_json_url": f"/uploads/results/{json_path.name}",
+            },
+            "_processing_time_ms": int((time.time() - start_time) * 1000),
         }
+        
+        # Save detailed results JSON
+        json_dir = Path("uploads") / "results"
+        json_dir.mkdir(parents=True, exist_ok=True)
+        json_path = json_dir / f"result_{file_stem}_{timestamp}.json"
+        with open(json_path, 'w') as f:
+            json.dump(result_response, f, indent=2)
+        logger.info("📄 Results saved: %s", json_path)
+        
+        logger.info("✅ Processing complete")
+        
+        return result_response
     except Exception as e:
-        logger.error("Processing error: %s", e)
+        import traceback
+        logger.error("Processing error: %s\n%s", str(e), traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
-
-def _run_video_task(
-    task_id: str, source_path: Path, target_fps: float, overlay_alpha: float, photo_id: Optional[str],
-) -> None:
-    """Background worker: process video frames + segmentation."""
-    start = time.time()
-    task_dir = Path("uploads/tasks") / task_id
-    task_dir.mkdir(parents=True, exist_ok=True)
-    frames_dir = task_dir / "frames"
-    frames_dir.mkdir(parents=True, exist_ok=True)
-    video_out_dir = Path("uploads/videos")
-    video_out_dir.mkdir(parents=True, exist_ok=True)
-
-    with video_tasks_lock:
-        video_tasks[task_id]["status"] = "processing"
-        video_tasks[task_id]["phase"] = "extracting_frames"
-
-    try:
-        from uvip_ai.pipeline.video_processor import VideoProcessor
-
-        processor = VideoProcessor()
-        video_info = processor.get_video_info(str(source_path))
-        effective_fps = target_fps if target_fps else video_info["fps"]
-
-        with video_tasks_lock:
-            video_tasks[task_id]["video_info"] = video_info
-
-        # Extract frames
-        frame_paths = processor.extract_frames(str(source_path), fps=effective_fps)
-        total_frames = len(frame_paths)
-        logger.info("Task %s: extracted %d frames", task_id, total_frames)
-
-        with video_tasks_lock:
-            video_tasks[task_id]["total_frames"] = total_frames
-            video_tasks[task_id]["phase"] = "segmentation"
-
-        # Get cached model (load sekali, reuse)
-        seg = get_seg_model()
-
-        # Process frames in memory (avoid disk I/O)
-        processed_frames = []
-        for i, frame_path in enumerate(frame_paths):
-            frame = cv2.imread(str(frame_path))
-            if frame is None:
-                continue
-
-            seg_res = seg.infer(frame)
-            seg_map = seg_res["seg_map"]
-            overlay = processor.create_overlay(frame, seg_map, alpha=overlay_alpha)
-
-            processed_frames.append(overlay)
-            frame_path.unlink(missing_ok=True)
-
-            with video_tasks_lock:
-                video_tasks[task_id]["frames_processed"] = i + 1
-
-            if (i + 1) % 10 == 0:
-                logger.info("Task %s: %d/%d frames", task_id, i + 1, total_frames)
-
-        # Don't free model - keep cached for next task
-
-        with video_tasks_lock:
-            video_tasks[task_id]["phase"] = "combining_video"
-
-        # Write video directly from memory
-        output_filename = f"segmented_{task_id}.mp4"
-        output_path = video_out_dir / output_filename
-
-        if processed_frames:
-            h, w = processed_frames[0].shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out = cv2.VideoWriter(str(output_path), fourcc, effective_fps, (w, h))
-            try:
-                for frame in processed_frames:
-                    out.write(frame)
-            finally:
-                out.release()
-
-        source_path.unlink(missing_ok=True)
-
-        elapsed = (time.time() - start) * 1000
-        logger.info("✅ Task %s done (%.0fms)", task_id, elapsed)
-
-        result = {
-            "video_url": f"/uploads/videos/{output_filename}",
-            "video_info": video_info,
-            "frames_processed": len(processed_frames),
-            "processing_time_ms": elapsed,
-        }
-
-        with video_tasks_lock:
-            video_tasks[task_id].update({
-                "status": "completed",
-                "phase": "done",
-                "result": result,
-                "finished_at": time.time(),
-            })
-
-        if photo_id:
-            try:
-                import httpx
-                with httpx.Client(timeout=10.0) as client:
-                    client.post(
-                        os.environ.get("BACKEND_URL", "http://localhost:8000")
-                        + "/api/ai/video-result",
-                        json={"photo_id": photo_id, **result},
-                    )
-            except Exception as cb_err:
-                logger.warning("Callback failed for task %s: %s", task_id, cb_err)
-
-    except Exception as e:
-        elapsed = (time.time() - start) * 1000
-        logger.error("❌ Task %s gagal: %s (%.0fms)", task_id, str(e), elapsed)
-        for p in frames_dir.glob("*.jpg"):
-            p.unlink(missing_ok=True)
-        source_path.unlink(missing_ok=True)
-        with video_tasks_lock:
-            video_tasks[task_id].update({
-                "status": "failed",
-                "error": str(e),
-                "finished_at": time.time(),
-            })
 
 
 @app.post("/ai/process-video")
