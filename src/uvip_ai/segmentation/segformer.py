@@ -174,7 +174,7 @@ class SegformerB5:
         pct_by_class = {}
         for class_id, pct_val in enumerate(pct_array):
             if hasattr(self.model.config, 'id2label') and class_id in self.model.config.id2label:
-                class_name = self.model.config.id2label[class_id].lower()
+                class_name = self.model.config.id2label[class_id].lower().replace(" ", "_")
                 category = self.CLASS_MAP.get(class_name, class_name)
                 if category not in pct_by_class:
                     pct_by_class[category] = 0

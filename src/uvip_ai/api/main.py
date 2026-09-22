@@ -184,7 +184,7 @@ def post_process(path: Path) -> dict:
             },
             "shap_values": [],
             "metrics_source": {
-                "pct_by_class": {k: round(v, 2) for k, v in pct_by_class.items()},
+                "pct_by_class": {k.replace(" ", "_"): round(v, 2) for k, v in pct_by_class.items()},
                 "seg_map_shape": list(seg_map.shape),
                 "class_count": len(np.unique(seg_map)),
             },
