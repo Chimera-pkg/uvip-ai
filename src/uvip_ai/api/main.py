@@ -206,6 +206,117 @@ def post_process(path: Path) -> dict:
         import traceback
         logger.error("Processing error: %s\n%s", str(e), traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overlay_alpha: float, photo_id: Optional[str]):
+    """Background task untuk process video frame-by-frame dengan segmentation."""
+    try:
+        from uvip_ai.pipeline.video_processor import VideoProcessor
+        from src.uvip_ai.segmentation.segformer import SegformerB5
+        
+        with video_tasks_lock:
+            video_tasks[task_id]["status"] = "processing"
+            video_tasks[task_id]["phase"] = "initializing"
+        
+        # Initialize models (lazy load)
+        logger.info("Loading models for video task %s...", task_id)
+        seg_model = SegformerB5(low_vram_mode=True)
+        processor = VideoProcessor()
+        
+        # Open video
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open video: {video_path}")
+        
+        original_fps = cap.get(cv2.CAP_PROP_FPS)
+        target_fps = fps if fps else original_fps
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        with video_tasks_lock:
+            video_tasks[task_id]["total_frames"] = total_frames
+            video_tasks[task_id]["video_info"] = {
+                "original_fps": original_fps,
+                "target_fps": target_fps,
+                "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            }
+        
+        # Process frames
+        frame_idx = 0
+        output_frames = []
+        start_time = time.time()
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Extract and segment
+            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            result = seg_model.infer(image, max_resolution=768)
+            seg_map = result["seg_map"]
+            
+            # Create overlay
+            overlay = processor.create_overlay(frame, seg_map, alpha=overlay_alpha)
+            output_frames.append(overlay)
+            
+            # Update progress
+            video_tasks[task_id]["frames_processed"] = len(output_frames)
+            
+            if frame_idx % 10 == 0:
+                with video_tasks_lock:
+                    video_tasks[task_id]["phase"] = f"processing_{frame_idx}_{total_frames}"
+            
+            frame_idx += 1
+        
+        cap.release()
+        
+        # Combine frames to video
+        with video_tasks_lock:
+            video_tasks[task_id]["phase"] = "combining_frames"
+        
+        output_video_path = processor.output_dir / f"video_{task_id}.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(str(output_video_path), fourcc, target_fps, (output_frames[0].shape[1], output_frames[0].shape[0]))
+        
+        for frame in output_frames:
+            out.write(frame)
+        
+        out.release()
+        
+        # Prepare result
+        processing_time_ms = int((time.time() - start_time) * 1000)
+        video_url = f"/uploads/videos/{output_video_path.name}"
+        
+        result_response = {
+            "status": "completed",
+            "task_id": task_id,
+            "filename": video_path.name,
+            "video_url": video_url,
+            "total_frames": len(output_frames),
+            "video_info": video_tasks[task_id]["video_info"],
+            "processing_time_ms": processing_time_ms,
+            "created_at": video_tasks[task_id]["created_at"],
+        }
+        
+        with video_tasks_lock:
+            video_tasks[task_id]["status"] = "completed"
+            video_tasks[task_id]["result"] = result_response
+            video_tasks[task_id]["finished_at"] = time.time()
+        
+        logger.info("✅ Video task %s completed: %s frames in %dms", 
+                    task_id, len(output_frames), processing_time_ms)
+        
+        # Post to backend if photo_id provided
+        if photo_id:
+            await _post_result_to_backend(photo_id, result_response)
+    
+    except Exception as e:
+        import traceback
+        logger.error("❌ Video task %s failed: %s\n%s", task_id, str(e), traceback.format_exc())
+        
+        with video_tasks_lock:
+            video_tasks[task_id]["status"] = "failed"
+            video_tasks[task_id]["error"] = str(e)
+            video_tasks[task_id]["finished_at"] = time.time()
 
 
 @app.post("/ai/process-video")
