@@ -51,7 +51,17 @@ class Dinov2Extractor:
         self.low_vram_mode = low_vram_mode
         self._model = None
         self._processor = None
-        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        resolved = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        if resolved == "cuda":
+            try:
+                _probe = torch.zeros((1,), device="cuda")
+                _probe.cpu()
+                del _probe
+                torch.cuda.synchronize()
+            except Exception as cuda_err:
+                logger.warning("CUDA kernel probe failed (%s). Falling back to CPU.", cuda_err)
+                resolved = "cpu"
+        self._device = resolved
         self._dtype = torch.float16 if (self._device == "cuda" and low_vram_mode) else torch.float32
         logger.info("DINOv2 model: %s (embed_dim=%d, device=%s)",
                      self.model_id, self.embed_dim, self._device)

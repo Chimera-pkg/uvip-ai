@@ -210,15 +210,15 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
     """Background task untuk process video frame-by-frame dengan segmentation."""
     try:
         from uvip_ai.pipeline.video_processor import VideoProcessor
-        from src.uvip_ai.segmentation.segformer import SegformerB5
+        # seg_model via get_seg_model() for caching and CUDA probe
         
         with video_tasks_lock:
             video_tasks[task_id]["status"] = "processing"
             video_tasks[task_id]["phase"] = "initializing"
         
-        # Initialize models (lazy load)
+        # Initialize models (lazy load) — use cached instance with CUDA probe
         logger.info("Loading models for video task %s...", task_id)
-        seg_model = SegformerB5(low_vram_mode=True)
+        seg_model = get_seg_model()
         processor = VideoProcessor()
         
         # Open video

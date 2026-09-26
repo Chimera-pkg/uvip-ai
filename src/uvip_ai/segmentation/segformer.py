@@ -93,9 +93,20 @@ class SegformerB5:
         self.low_vram_mode = low_vram_mode
         self._model = None
         self._processor = None
-        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Determine device with CUDA kernel compatibility check (GTX 1070 Pascal sm_61 fix)
+        resolved = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        if resolved == "cuda":
+            try:
+                # Probe CUDA with tiny tensor to catch "no kernel image" errors early
+                _probe = torch.zeros((1,), device="cuda")
+                _probe.cpu()  # force sync
+                del _probe
+                torch.cuda.synchronize()
+            except Exception as cuda_err:
+                print(f"[SegFormer] CUDA kernel probe failed ({cuda_err}). Falling back to CPU.")
+                resolved = "cpu"
+        self._device = resolved
         self._dtype = torch.float16 if (self._device == "cuda" and low_vram_mode) else torch.float32
-
     def _load(self) -> None:
         if self._model is not None:
             return
@@ -104,15 +115,12 @@ class SegformerB5:
         self._model = SegformerForSemanticSegmentation.from_pretrained(
             self.model_id, ignore_mismatched_sizes=True, weights_only=False
         ).to(self._device)
-        
         # Explicitly convert ALL parameters including biases to target dtype
-        # This prevents "Input type (float) and bias type (c10::Half) should be the same" error
         self._model.to(dtype=self._dtype)
         for name, param in self._model.named_parameters():
             param.to(self._dtype)
-        
         self._model.eval()
-        print("[SegFormer] Model loaded.")
+        print(f"[SegFormer] Model loaded on {self._device}.")
 
     @property
     def model(self):
