@@ -9,6 +9,7 @@
 # --- Deteksi & privacy (Step 2) ---
 ultralytics>=8.2.0          # YOLOv8-nano untuk deteksi wajah & plat
 opencv-python>=4.9.0        # Gaussian blur, I/O gambar
+imageio-ffmpeg>=0.5.0       # static ffmpeg: re-encode video H.264 supaya browser bisa play
 
 # --- Segmentasi & feature extraction (Step 3-4) ---
 transformers>=4.44.0        # SegFormer-B5, DINOv2 Large

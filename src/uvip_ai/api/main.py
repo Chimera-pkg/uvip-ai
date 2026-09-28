@@ -93,6 +93,28 @@ def save_upload(file: UploadFile) -> Path:
         f.write(content)
     return path
 
+def _h264_encode(src: Path, dst: Path) -> bool:
+    """Re-encode mp4v -> H.264 + faststart supaya browser bisa play. False jika ffmpeg gagal/absen."""
+    import subprocess
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        try:
+            from imageio_ffmpeg import get_ffmpeg_exe
+            ffmpeg = get_ffmpeg_exe()
+        except ImportError:
+            ffmpeg = None
+    if ffmpeg is None:
+        logger.warning("ffmpeg not found; mp4v output may not play in browsers")
+        return False
+    cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", str(src),
+           "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-movflags", "+faststart", "-preset", "veryfast", "-crf", "23", str(dst)]
+    r = subprocess.run(cmd, capture_output=True)
+    if r.returncode != 0:
+        logger.warning("ffmpeg encode failed: %s", r.stderr[-500:].decode(errors="ignore"))
+        return False
+    return True
+
 def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int) -> dict:
     """Format metrics unified — sama persis untuk foto & video."""
     green_pct = pct_by_class.get('vegetation', 0) + pct_by_class.get('tree', 0)
@@ -274,14 +296,22 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
         with video_tasks_lock:
             video_tasks[task_id]["phase"] = "combining_frames"
         
+        if not output_frames:
+            raise ValueError("No frames processed")
         output_video_path = processor.output_dir / f"video_{task_id}.mp4"
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(str(output_video_path), fourcc, target_fps, (output_frames[0].shape[1], output_frames[0].shape[0]))
-        
+        w, h = output_frames[0].shape[1], output_frames[0].shape[0]
+        out = cv2.VideoWriter(str(output_video_path), fourcc, target_fps, (w, h))
+        if not out.isOpened():
+            raise RuntimeError("VideoWriter failed to open output file")
         for frame in output_frames:
             out.write(frame)
-        
         out.release()
+
+        # Browser tidak bisa decode mp4v (MPEG-4 Part 2) -> re-encode H.264
+        h264_tmp = output_video_path.with_name(output_video_path.stem + "_h264.mp4")
+        if _h264_encode(output_video_path, h264_tmp):
+            h264_tmp.replace(output_video_path)
         
         # Prepare result
         processing_time_ms = int((time.time() - start_time) * 1000)
