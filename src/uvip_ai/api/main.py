@@ -93,6 +93,41 @@ def save_upload(file: UploadFile) -> Path:
         f.write(content)
     return path
 
+def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int) -> dict:
+    """Format metrics unified — sama persis untuk foto & video."""
+    green_pct = pct_by_class.get('vegetation', 0) + pct_by_class.get('tree', 0)
+    building_pct = pct_by_class.get('building', 0)
+    road_pct = pct_by_class.get('road', 0)
+    sky_pct = pct_by_class.get('sky', 0)
+    sidewalk_pct = pct_by_class.get('sidewalk', 0)
+    beauty_score = min(10, max(0, (green_pct * 0.3) + (sky_pct * 0.4) + (2 if building_pct > 30 else 0)))
+    safety_score = min(10, max(0, (sidewalk_pct * 2) + (road_pct * 0.5)))
+    comfort_score = min(10, max(0, (green_pct * 0.5) + (sky_pct * 0.5)))
+    uvi_score = (beauty_score / 10) * 0.4 + (safety_score / 10) * 0.3 + (comfort_score / 10) * 0.3
+    return {
+        "segmentation_results": {
+            "green_coverage_pct": round(green_pct, 4),
+            "building_coverage_pct": round(building_pct, 4),
+            "walkability_ratio": round(sidewalk_pct / (road_pct + sidewalk_pct + 0.01), 4),
+            "visual_clutter_index": round(1 - (green_pct / 100), 4),
+            "sky_visibility_pct": round(sky_pct, 4),
+        },
+        "perception_prediction": {
+            "beauty_score": round(beauty_score, 2),
+            "safety_score": round(safety_score, 2),
+            "comfort_score": round(comfort_score, 2),
+            "uvi_score": round(uvi_score, 2),
+        },
+        "shap_values": [],
+        "metrics_source": {
+            "pct_by_class": {k.replace(" ", "_"): round(v, 2) for k, v in pct_by_class.items()},
+            "seg_map_shape": list(seg_shape),
+            "class_count": len(pct_by_class),
+        },
+        "_processing_time_ms": processing_time_ms,
+    }
+
+
 def post_process(path: Path) -> dict:
     """Run full pipeline AI pada foto → return unified result with saved files."""
     start_time = time.time()
@@ -152,43 +187,12 @@ def post_process(path: Path) -> dict:
         pil_overlay.save(str(overlay_path))
         logger.info("🎨 Overlay saved: %s", overlay_path)
         
-        # Calculate perception predictions
-        green_pct = pct_by_class.get('vegetation', 0) + pct_by_class.get('tree', 0)
-        building_pct = pct_by_class.get('building', 0)
-        road_pct = pct_by_class.get('road', 0)
-        sky_pct = pct_by_class.get('sky', 0)
-        sidewalk_pct = pct_by_class.get('sidewalk', 0)
-        
-        beauty_score = min(10, max(0, (green_pct * 0.3) + (sky_pct * 0.4) + (2 if building_pct > 30 else 0)))
-        safety_score = min(10, max(0, (sidewalk_pct * 2) + (road_pct * 0.5)))
-        comfort_score = min(10, max(0, (green_pct * 0.5) + (sky_pct * 0.5)))
-        uvi_score = (beauty_score / 10) * 0.4 + (safety_score / 10) * 0.3 + (comfort_score / 10) * 0.3
-        
-        # Build response matching expected backend format
+        unified = build_unified_metrics(pct_by_class, seg_map.shape, int((time.time() - start_time) * 1000))
         result_response = {
             "privacy_masked_url": f"/uploads/masks/{mask_path.name}",
             "segmentation_url": f"/uploads/segmentation/{seg_path.name}",
             "segmentation_overlay_url": f"/uploads/segmentation/{overlay_path.name}",
-            "segmentation_results": {
-                "green_coverage_pct": round(pct_by_class.get('vegetation', 0) + pct_by_class.get('tree', 0), 4),
-                "building_coverage_pct": round(building_pct, 4),
-                "walkability_ratio": round(sidewalk_pct / (road_pct + sidewalk_pct + 0.01), 4),
-                "visual_clutter_index": round(1 - (green_pct / 100), 4),
-                "sky_visibility_pct": round(sky_pct, 4),
-            },
-            "perception_prediction": {
-                "beauty_score": round(beauty_score, 2),
-                "safety_score": round(safety_score, 2),
-                "comfort_score": round(comfort_score, 2),
-                "uvi_score": round(uvi_score, 2),
-            },
-            "shap_values": [],
-            "metrics_source": {
-                "pct_by_class": {k.replace(" ", "_"): round(v, 2) for k, v in pct_by_class.items()},
-                "seg_map_shape": list(seg_map.shape),
-                "class_count": len(np.unique(seg_map)),
-            },
-            "_processing_time_ms": int((time.time() - start_time) * 1000),
+            **unified,
         }
         
         # Save detailed results JSON
@@ -242,19 +246,16 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
         # Process frames
         frame_idx = 0
         output_frames = []
+        frame_pcts = []
         start_time = time.time()
-        
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-            
-            # Extract and segment
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             result = seg_model.infer(image, max_resolution=768)
             seg_map = result["seg_map"]
-            
-            # Create overlay
+            frame_pcts.append(result.get("pct_by_class", {}))
             overlay = processor.create_overlay(frame, seg_map, alpha=overlay_alpha)
             output_frames.append(overlay)
             
@@ -285,18 +286,30 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
         # Prepare result
         processing_time_ms = int((time.time() - start_time) * 1000)
         video_url = f"/uploads/videos/{output_video_path.name}"
-        
+        n = max(1, len(frame_pcts))
+        class_keys = sorted({k for p in frame_pcts for k in p})
+        avg_pct = {k: sum(p.get(k, 0.0) for p in frame_pcts) / n for k in class_keys}
+        h, w = output_frames[0].shape[:2]
+        unified = build_unified_metrics(avg_pct, (h, w), processing_time_ms)
         result_response = {
             "status": "completed",
             "task_id": task_id,
             "filename": video_path.name,
             "video_url": video_url,
+            "video_overlay_url": video_url,
             "total_frames": len(output_frames),
+            "frames_processed": len(output_frames),
             "video_info": video_tasks[task_id]["video_info"],
-            "processing_time_ms": processing_time_ms,
             "created_at": video_tasks[task_id]["created_at"],
+            "processing_time_ms": processing_time_ms,
+            **unified,
         }
-        
+        json_dir = Path("uploads") / "results"
+        json_dir.mkdir(parents=True, exist_ok=True)
+        json_path = json_dir / f"result_video_{task_id}.json"
+        with open(json_path, "w") as f:
+            json.dump(result_response, f, indent=2)
+        logger.info("📄 Video results saved: %s", json_path)
         with video_tasks_lock:
             video_tasks[task_id]["status"] = "completed"
             video_tasks[task_id]["result"] = result_response
