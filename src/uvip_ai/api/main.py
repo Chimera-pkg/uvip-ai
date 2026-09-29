@@ -89,7 +89,7 @@ app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
 
 # Build stamp - bukti versi kode yang benar-benar jalan (lihat GET /health)
-BUILD_STAMP = "jpg-h264-v5-cleanup-fix"
+BUILD_STAMP = "jpg-h264-v6-odd-dims"
 
 # Binary ffmpeg yang sudah terbukti bisa encode (diisi oleh _encode_h264_frames)
 _ffmpeg_exe_cache: Optional[str] = None
@@ -103,21 +103,33 @@ async def health():
 
 @app.get("/health/ffmpeg")
 async def health_ffmpeg():
-    """Diagnosa: binary ffmpeg mana yang benar-benar bisa encode H.264."""
+    """Diagnosa: binary ffmpeg mana yang benar-benar bisa encode H.264.
+
+    Diuji pada frame genap DAN ganjil, karena frame video sumber bisa
+    beresolusi ganjil dan itu penyebab paling sering libx264 gagal.
+    """
     import tempfile
     import numpy as np
     rows = []
     with tempfile.TemporaryDirectory() as td:
-        sample = Path(td) / "f_000000.jpg"
-        if not cv2.imwrite(str(sample), np.zeros((64, 64, 3), dtype=np.uint8)):
+        even = Path(td) / "even.jpg"
+        odd = Path(td) / "odd.jpg"
+        if not cv2.imwrite(str(even), np.zeros((64, 64, 3), dtype=np.uint8)):
             return {"error": "cv2.imwrite gagal - OpenCV bermasalah"}
+        cv2.imwrite(str(odd), np.zeros((65, 63, 3), dtype=np.uint8))
         for exe in _ffmpeg_candidates():
-            ok, detail = _probe_ffmpeg(exe, sample)
-            rows.append({"path": exe, "version": _ffmpeg_version(exe),
-                         "h264_ok": ok, "detail": detail})
-    return {"build": BUILD_STAMP, "candidates": rows,
-            "hint": "h264_ok=false pada /usr/bin/ffmpeg -> "
-                    "apt-get update && apt-get install -y --reinstall ffmpeg"}
+            ok_even, det_even = _probe_ffmpeg(exe, even)
+            ok_odd, det_odd = _probe_ffmpeg(exe, odd)
+            rows.append({
+                "path": exe, "version": _ffmpeg_version(exe),
+                "h264_ok": ok_even, "detail": det_even,
+                "odd_dims_ok": ok_odd, "odd_dims_detail": det_odd,
+            })
+    return {"build": BUILD_STAMP, "candidates": rows, "pad_filter": PAD_FILTER,
+            "hint": "h264_ok=false pada semua kandidat -> "
+                    "apt-get update && apt-get install -y --reinstall ffmpeg. "
+                    "odd_dims_ok=false tapi h264_ok=true itu normal bila build "
+                    "ffmpeg tidak punya filter pad (encode tetap pakai pad)."}
 
 
 class ProcessRequest(BaseModel):
@@ -154,6 +166,11 @@ def _ffmpeg_candidates() -> list:
     return cands
 
 
+# libx264 menolak dimensi ganjil ("width not divisible by 2"). Semua encode
+# H.264 lewat filter ini supaya frame beresolusi ganjil tetap bisa diproses.
+PAD_FILTER = "pad=ceil(iw/2)*2:ceil(ih/2)*2"
+
+
 def _ffmpeg_version(exe: str) -> str:
     """Baris pertama `ffmpeg -version` (untuk diagnosa)."""
     import subprocess
@@ -169,20 +186,28 @@ def _probe_ffmpeg(exe: str, sample_frame: Path, fps: float = 25.0) -> tuple:
 
     Return (ok: bool, detail: str). Ini penting: beberapa build ffmpeg
     (mis. di container) punya libx264 yang gagal dibuka walau `-version` normal.
+
+    Filter yang dipakai HARUS sama dengan encode asli. Tanpa `pad`, frame
+    berdimensi ganjil ditolak libx264 di sini padahal encode aslinya bisa
+    berhasil -> encoder yang sehat jadi dianggap rusak dan task gagal total.
     """
     import subprocess, tempfile
+    last = ""
     with tempfile.TemporaryDirectory() as td:
-        out = Path(td) / "probe.mp4"
-        cmd = [exe, "-y", "-loglevel", "error",
-               "-framerate", f"{fps}", "-i", str(sample_frame),
-               "-frames:v", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out)]
-        try:
-            r = subprocess.run(cmd, capture_output=True, timeout=120)
-        except subprocess.TimeoutExpired:
-            return False, "timeout saat probe"
-        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
-            return True, f"ok ({out.stat().st_size} byte)"
-        return False, (r.stderr.decode(errors="ignore").strip()[-400:] or f"exit {r.returncode}")
+        for extra in (["-vf", PAD_FILTER], []):
+            out = Path(td) / "probe.mp4"
+            cmd = [exe, "-y", "-loglevel", "error",
+                   "-framerate", f"{fps}", "-i", str(sample_frame), *extra,
+                   "-frames:v", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out)]
+            try:
+                r = subprocess.run(cmd, capture_output=True, timeout=120)
+            except subprocess.TimeoutExpired:
+                return False, "timeout saat probe"
+            if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
+                return True, f"ok ({out.stat().st_size} byte)"
+            last = (r.stderr.decode(errors="ignore").strip()[-400:]
+                    or f"exit {r.returncode}")
+    return False, last
 
 
 def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
@@ -213,16 +238,18 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
     problems = []
     for exe in candidates:
         ok, detail = _probe_ffmpeg(exe, frames[0], fps)
-        if not ok:
-            logger.error("ffmpeg %s TIDAK BISA encode H.264: %s", exe, detail)
-            problems.append(f"{exe} [{_ffmpeg_version(exe)}]: {detail}")
-            continue
-        logger.info("Pakai ffmpeg: %s [%s]", exe, _ffmpeg_version(exe))
-        _ffmpeg_exe_cache = exe
+        if ok:
+            logger.info("Probe OK: %s [%s] -> %s", exe, _ffmpeg_version(exe), detail)
+        else:
+            # Probe hanya petunjuk, bukan gerbang: encode asli masih dicoba.
+            # Probe bisa gagal karena hal yang tidak relevan (mis. frame contoh
+            # kebetulan berdimensi ganjil) -> jangan langsung buang kandidat.
+            logger.warning("Probe gagal pada %s [%s]: %s - tetap dicoba encode",
+                           exe, _ffmpeg_version(exe), detail)
 
-        # libx264 wajib dimensi genap. Sebagian build ffmpeg gagal di filter
-        # (swscale), jadi sediakan juga percobaan tanpa filter apa pun.
-        for extra in (["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"], []):
+        # Coba dengan pad lebih dulu (wajib untuk dimensi ganjil), lalu tanpa
+        # filter sebagai jalan terakhir bila build ffmpeg bermasalah di swscale.
+        for extra in (["-vf", PAD_FILTER], []):
             cmd = [exe, "-y", "-loglevel", "error",
                    "-framerate", f"{fps}", "-i", pattern, *extra,
                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
@@ -235,10 +262,16 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
                 problems.append(f"{exe}: timeout 900s (frames={n_frames})")
                 break
             if r.returncode == 0 and dst.exists() and dst.stat().st_size > 0:
+                # cache hanya diisi setelah encode TERBUKTI berhasil
+                _ffmpeg_exe_cache = exe
+                logger.info("Encode sukses: %s (pad=%s, %d frame)",
+                            exe, bool(extra), n_frames)
                 return
-            logger.warning("encode gagal (pakai filter=%s): %s", bool(extra),
-                           r.stderr.decode(errors="ignore")[-300:])
-        problems.append(f"{exe}: encode gagal walau probe lolos")
+            err = r.stderr.decode(errors="ignore").strip()
+            logger.warning("encode gagal (pad=%s): %s", bool(extra), err[-300:])
+            problems.append(
+                f"{exe} [pad={bool(extra)}] [{_ffmpeg_version(exe)}]: "
+                f"{err[-400:] or f'exit {r.returncode}'}")
 
     raise RuntimeError(
         f"semua ffmpeg gagal encode H.264 (fps={fps}, frames={n_frames}). "
