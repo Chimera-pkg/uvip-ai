@@ -118,10 +118,31 @@ if [ "$LIVE" != "$EXPECTED" ]; then
 fi
 echo "OK: build cocok"
 
-# --- diagnosa ffmpeg ----------------------------------------------------
+# --- diagnosa + GERBANG ffmpeg ------------------------------------------
+# Tanpa gerbang ini, server bisa "sehat" menurut /health padahal encode video
+# akan gagal untuk setiap request. Lebih baik deploy gagal sekarang.
 echo "==> Diagnosa ffmpeg"
-curl -s --max-time 120 "http://localhost:$PORT/health/ffmpeg" | "$PYTHON" -m json.tool \
-    || echo "(endpoint /health/ffmpeg tidak ada - berarti masih build lama)"
+FFJSON="$(curl -s --max-time 180 "http://localhost:$PORT/health/ffmpeg" || true)"
+if [ -z "$FFJSON" ]; then
+    echo "!! /health/ffmpeg tidak merespons (mungkin masih build lama)"; exit 1
+fi
+echo "$FFJSON" | "$PYTHON" -m json.tool || echo "$FFJSON"
+
+if echo "$FFJSON" | "$PYTHON" -c '
+import json, sys
+d = json.load(sys.stdin)
+rows = d.get("candidates", [])
+ok = [c["path"] for c in rows if c.get("encode_ok")]
+for c in rows:
+    print(("  OK  " if c.get("encode_ok") else "  FAIL") + " " + c["path"])
+sys.exit(0 if ok else 1)
+'; then
+    echo "OK: ada ffmpeg yang benar-benar bisa encode"
+else
+    echo "!! SEMUA ffmpeg di server ini gagal encode. Proses video akan gagal."
+    echo "!! Perbaiki: apt-get update && apt-get install -y --reinstall ffmpeg"
+    exit 1
+fi
 
 if [ "$SYSTEMD" = "1" ]; then
     echo "==> Selesai. Log: journalctl -u uvip -f"
