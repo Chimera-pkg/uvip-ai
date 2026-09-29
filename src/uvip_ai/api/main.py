@@ -106,6 +106,7 @@ def _encode_h264(src: Path, dst: Path) -> None:
     if ffmpeg is None:
         raise RuntimeError("ffmpeg tidak ada: install system ffmpeg atau pip install imageio-ffmpeg")
     cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", str(src),
+           "-vf", "scale=ceil(iw/2)*2:ceil(ih/2)*2",
            "-c:v", "libx264", "-pix_fmt", "yuv420p",
            "-movflags", "+faststart", "-preset", "veryfast", "-crf", "23", str(dst)]
     r = subprocess.run(cmd, capture_output=True, timeout=900)
