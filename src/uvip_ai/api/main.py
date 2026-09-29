@@ -73,12 +73,35 @@ app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
 
 # Build stamp - bukti versi kode yang benar-benar jalan (lihat GET /health)
-BUILD_STAMP = "jpg-h264-v3"
+BUILD_STAMP = "jpg-h264-v4"
+
+# Binary ffmpeg yang sudah terbukti bisa encode (diisi oleh _encode_h264_frames)
+_ffmpeg_exe_cache: Optional[str] = None
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat(),
-            "build": BUILD_STAMP, "encode_path": "jpg_frames->libx264"}
+            "build": BUILD_STAMP, "encode_path": "jpg_frames->libx264",
+            "ffmpeg_in_use": _ffmpeg_exe_cache}
+
+
+@app.get("/health/ffmpeg")
+async def health_ffmpeg():
+    """Diagnosa: binary ffmpeg mana yang benar-benar bisa encode H.264."""
+    import tempfile
+    import numpy as np
+    rows = []
+    with tempfile.TemporaryDirectory() as td:
+        sample = Path(td) / "f_000000.jpg"
+        if not cv2.imwrite(str(sample), np.zeros((64, 64, 3), dtype=np.uint8)):
+            return {"error": "cv2.imwrite gagal - OpenCV bermasalah"}
+        for exe in _ffmpeg_candidates():
+            ok, detail = _probe_ffmpeg(exe, sample)
+            rows.append({"path": exe, "version": _ffmpeg_version(exe),
+                         "h264_ok": ok, "detail": detail})
+    return {"build": BUILD_STAMP, "candidates": rows,
+            "hint": "h264_ok=false pada /usr/bin/ffmpeg -> "
+                    "apt-get update && apt-get install -y --reinstall ffmpeg"}
 
 
 class ProcessRequest(BaseModel):
@@ -97,18 +120,59 @@ def save_upload(file: UploadFile) -> Path:
         f.write(content)
     return path
 
-def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
-    """Encode urutan JPG -> H.264 + faststart langsung. Raise kalau gagal."""
+def _ffmpeg_candidates() -> list:
+    """Daftar binary ffmpeg yang mungkin dipakai, urut prioritas."""
+    cands = []
+    if _ffmpeg_exe_cache and Path(_ffmpeg_exe_cache).exists():
+        cands.append(_ffmpeg_exe_cache)
+    sys_ff = shutil.which("ffmpeg")
+    if sys_ff and sys_ff not in cands:
+        cands.append(sys_ff)
+    try:
+        from imageio_ffmpeg import get_ffmpeg_exe
+        exe = get_ffmpeg_exe()
+        if exe and Path(exe).exists() and exe not in cands:
+            cands.append(exe)
+    except Exception as exc:  # ImportError / RuntimeError / dll.
+        logger.warning("imageio-ffmpeg tidak tersedia: %s", exc)
+    return cands
+
+
+def _ffmpeg_version(exe: str) -> str:
+    """Baris pertama `ffmpeg -version` (untuk diagnosa)."""
     import subprocess
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
+    try:
+        r = subprocess.run([exe, "-version"], capture_output=True, timeout=30)
+        return (r.stdout.decode(errors="ignore").splitlines() or ["?"])[0]
+    except Exception as exc:
+        return f"gagal ambil versi: {exc}"
+
+
+def _probe_ffmpeg(exe: str, sample_frame: Path, fps: float = 25.0) -> tuple:
+    """Buktikan binary ini BENAR-BENAR bisa encode H.264 dari 1 frame JPG.
+
+    Return (ok: bool, detail: str). Ini penting: beberapa build ffmpeg
+    (mis. di container) punya libx264 yang gagal dibuka walau `-version` normal.
+    """
+    import subprocess, tempfile
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "probe.mp4"
+        cmd = [exe, "-y", "-loglevel", "error",
+               "-framerate", f"{fps}", "-i", str(sample_frame),
+               "-frames:v", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out)]
         try:
-            from imageio_ffmpeg import get_ffmpeg_exe
-            ffmpeg = get_ffmpeg_exe()
-        except ImportError:
-            ffmpeg = None
-    if ffmpeg is None:
-        raise RuntimeError("ffmpeg tidak ada: install system ffmpeg atau pip install imageio-ffmpeg")
+            r = subprocess.run(cmd, capture_output=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            return False, "timeout saat probe"
+        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            return True, f"ok ({out.stat().st_size} byte)"
+        return False, (r.stderr.decode(errors="ignore").strip()[-400:] or f"exit {r.returncode}")
+
+
+def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
+    """Encode urutan JPG -> H.264 + faststart. Coba tiap binary ffmpeg yang ada."""
+    import subprocess
+    global _ffmpeg_exe_cache
 
     # fps invalid (0/NaN/inf) bikin libx264 gagal buka encoder - paksa ke rentang aman
     try:
@@ -118,33 +182,53 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
     if not (fps > 0 and fps < 1000):
         fps = 25.0
 
-    n_frames = len(list(frames_dir.glob("f_*.jpg")))
-    if n_frames == 0:
+    frames = sorted(frames_dir.glob("f_*.jpg"))
+    if not frames:
         raise RuntimeError(f"tidak ada frame JPG di {frames_dir}")
-
+    n_frames = len(frames)
     pattern = str(frames_dir / "f_%06d.jpg")
 
-    def _run(extra: list) -> "subprocess.CompletedProcess":
-        cmd = [ffmpeg, "-y", "-loglevel", "error",
-               "-framerate", f"{fps}", "-i", pattern,
-               *extra,
-               "-c:v", "libx264", "-pix_fmt", "yuv420p",
-               "-movflags", "+faststart", "-preset", "veryfast", "-crf", "23",
-               str(dst)]
-        logger.info("ffmpeg: %s", " ".join(cmd))
-        return subprocess.run(cmd, capture_output=True, timeout=900)
-
-    # libx264 wajib dimensi genap. Scale filter di beberapa build ffmpeg gagal
-    # ("Generic error in an external library"), jadi pakai pad (aman, no scaling).
-    r = _run(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"])
-    if r.returncode != 0:
-        logger.warning("encode dengan pad gagal, coba tanpa filter: %s",
-                       r.stderr.decode(errors="ignore")[-300:])
-        r = _run([])
-    if r.returncode != 0:
+    candidates = _ffmpeg_candidates()
+    if not candidates:
         raise RuntimeError(
-            f"ffmpeg encode gagal (fps={fps}, frames={n_frames}): "
-            f"{r.stderr.decode(errors='ignore')[-1000:]}")
+            "ffmpeg tidak ditemukan. Install: apt-get install -y ffmpeg "
+            "atau pip install --force-reinstall imageio-ffmpeg")
+
+    problems = []
+    for exe in candidates:
+        ok, detail = _probe_ffmpeg(exe, frames[0], fps)
+        if not ok:
+            logger.error("ffmpeg %s TIDAK BISA encode H.264: %s", exe, detail)
+            problems.append(f"{exe} [{_ffmpeg_version(exe)}]: {detail}")
+            continue
+        logger.info("Pakai ffmpeg: %s [%s]", exe, _ffmpeg_version(exe))
+        _ffmpeg_exe_cache = exe
+
+        # libx264 wajib dimensi genap. Sebagian build ffmpeg gagal di filter
+        # (swscale), jadi sediakan juga percobaan tanpa filter apa pun.
+        for extra in (["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"], []):
+            cmd = [exe, "-y", "-loglevel", "error",
+                   "-framerate", f"{fps}", "-i", pattern, *extra,
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                   "-movflags", "+faststart", "-preset", "veryfast", "-crf", "23",
+                   str(dst)]
+            logger.info("ffmpeg: %s", " ".join(cmd))
+            try:
+                r = subprocess.run(cmd, capture_output=True, timeout=900)
+            except subprocess.TimeoutExpired:
+                problems.append(f"{exe}: timeout 900s (frames={n_frames})")
+                break
+            if r.returncode == 0 and dst.exists() and dst.stat().st_size > 0:
+                return
+            logger.warning("encode gagal (pakai filter=%s): %s", bool(extra),
+                           r.stderr.decode(errors="ignore")[-300:])
+        problems.append(f"{exe}: encode gagal walau probe lolos")
+
+    raise RuntimeError(
+        f"semua ffmpeg gagal encode H.264 (fps={fps}, frames={n_frames}). "
+        + " || ".join(problems)
+        + " || Cek GET /health/ffmpeg lalu: apt-get update && "
+          "apt-get install -y --reinstall ffmpeg")
 
 
 def _verify_playable(path: Path) -> tuple[int, int]:
