@@ -93,8 +93,8 @@ def save_upload(file: UploadFile) -> Path:
         f.write(content)
     return path
 
-def _encode_h264(src: Path, dst: Path) -> None:
-    """Re-encode mp4v -> H.264 + faststart. Raise kalau gagal — jangan serve file blank."""
+def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
+    """Encode urutan JPG -> H.264 + faststart langsung. Raise kalau gagal."""
     import subprocess
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
@@ -105,7 +105,8 @@ def _encode_h264(src: Path, dst: Path) -> None:
             ffmpeg = None
     if ffmpeg is None:
         raise RuntimeError("ffmpeg tidak ada: install system ffmpeg atau pip install imageio-ffmpeg")
-    cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", str(src),
+    cmd = [ffmpeg, "-y", "-loglevel", "error",
+           "-framerate", str(fps), "-i", str(frames_dir / "f_%06d.jpg"),
            "-vf", "scale=ceil(iw/2)*2:ceil(ih/2)*2",
            "-c:v", "libx264", "-pix_fmt", "yuv420p",
            "-movflags", "+faststart", "-preset", "veryfast", "-crf", "23", str(dst)]
@@ -309,24 +310,20 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
         if not output_frames:
             raise ValueError("No frames processed")
         output_video_path = processor.output_dir / f"video_{task_id}.mp4"
-        raw_path = processor.output_dir / f"raw_{task_id}.mp4"
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        w, h = output_frames[0].shape[1], output_frames[0].shape[0]
-        out = cv2.VideoWriter(str(raw_path), fourcc, target_fps, (w, h))
-        if not out.isOpened():
-            raise RuntimeError("VideoWriter gagal buka output (codec/dimensi invalid)")
-        for frame in output_frames:
-            out.write(frame)
-        out.release()
-
-        # mp4v (MPEG-4 Part 2) tidak di-decode browser -> wajib H.264.
-        # Gagal di titik mana pun = task failed, bukan file blank.
-        h264_tmp = processor.output_dir / f"h264_{task_id}.mp4"
-        _encode_h264(raw_path, h264_tmp)
-        vw, vh = _verify_playable(h264_tmp)
-        logger.info("Video %s playable: %dx%d", output_video_path.name, vw, vh)
-        h264_tmp.replace(output_video_path)
-        raw_path.unlink(missing_ok=True)
+        # VideoWriter+mp4v unreliable di server (file 0-byte/raw corrupt -> ffmpeg
+        # "received no packets"). Tulis frame ke disk, encode JPG->H264 langsung.
+        frames_dir = processor.output_dir / f"frames_{task_id}"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            for i, frame in enumerate(output_frames):
+                if not cv2.imwrite(str(frames_dir / f"f_{i:06d}.jpg"), frame,
+                                   [cv2.IMWRITE_JPEG_QUALITY, 92]):
+                    raise RuntimeError(f"gagal tulis frame {i}")
+            _encode_h264_frames(frames_dir, target_fps, output_video_path)
+            vw, vh = _verify_playable(output_video_path)
+            logger.info("Video %s playable: %dx%d", output_video_path.name, vw, vh)
+        finally:
+            shutil.rmtree(frames_dir, ignore_errors=True)
         
         # Prepare result
         processing_time_ms = int((time.time() - start_time) * 1000)
