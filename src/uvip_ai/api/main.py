@@ -72,9 +72,13 @@ uploads_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
 
+# Build stamp - bukti versi kode yang benar-benar jalan (lihat GET /health)
+BUILD_STAMP = "jpg-h264-v3"
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat(),
+            "build": BUILD_STAMP, "encode_path": "jpg_frames->libx264"}
 
 
 class ProcessRequest(BaseModel):
@@ -105,14 +109,42 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
             ffmpeg = None
     if ffmpeg is None:
         raise RuntimeError("ffmpeg tidak ada: install system ffmpeg atau pip install imageio-ffmpeg")
-    cmd = [ffmpeg, "-y", "-loglevel", "error",
-           "-framerate", str(fps), "-i", str(frames_dir / "f_%06d.jpg"),
-           "-vf", "scale=ceil(iw/2)*2:ceil(ih/2)*2",
-           "-c:v", "libx264", "-pix_fmt", "yuv420p",
-           "-movflags", "+faststart", "-preset", "veryfast", "-crf", "23", str(dst)]
-    r = subprocess.run(cmd, capture_output=True, timeout=900)
+
+    # fps invalid (0/NaN/inf) bikin libx264 gagal buka encoder - paksa ke rentang aman
+    try:
+        fps = float(fps)
+    except (TypeError, ValueError):
+        fps = 0.0
+    if not (fps > 0 and fps < 1000):
+        fps = 25.0
+
+    n_frames = len(list(frames_dir.glob("f_*.jpg")))
+    if n_frames == 0:
+        raise RuntimeError(f"tidak ada frame JPG di {frames_dir}")
+
+    pattern = str(frames_dir / "f_%06d.jpg")
+
+    def _run(extra: list) -> "subprocess.CompletedProcess":
+        cmd = [ffmpeg, "-y", "-loglevel", "error",
+               "-framerate", f"{fps}", "-i", pattern,
+               *extra,
+               "-c:v", "libx264", "-pix_fmt", "yuv420p",
+               "-movflags", "+faststart", "-preset", "veryfast", "-crf", "23",
+               str(dst)]
+        logger.info("ffmpeg: %s", " ".join(cmd))
+        return subprocess.run(cmd, capture_output=True, timeout=900)
+
+    # libx264 wajib dimensi genap. Scale filter di beberapa build ffmpeg gagal
+    # ("Generic error in an external library"), jadi pakai pad (aman, no scaling).
+    r = _run(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"])
     if r.returncode != 0:
-        raise RuntimeError(f"ffmpeg encode gagal: {r.stderr.decode(errors='ignore')[-1000:]}")
+        logger.warning("encode dengan pad gagal, coba tanpa filter: %s",
+                       r.stderr.decode(errors="ignore")[-300:])
+        r = _run([])
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg encode gagal (fps={fps}, frames={n_frames}): "
+            f"{r.stderr.decode(errors='ignore')[-1000:]}")
 
 
 def _verify_playable(path: Path) -> tuple[int, int]:
@@ -264,7 +296,9 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
             raise ValueError(f"Cannot open video: {video_path}")
         
         original_fps = cap.get(cv2.CAP_PROP_FPS)
-        target_fps = fps if fps else (original_fps if original_fps and original_fps > 0 else 30.0)
+        if not (isinstance(original_fps, (int, float)) and original_fps > 0 and original_fps < 1000):
+            original_fps = 25.0
+        target_fps = fps if (isinstance(fps, (int, float)) and fps > 0 and fps < 1000) else original_fps
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
         with video_tasks_lock:
@@ -322,7 +356,11 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
             _encode_h264_frames(frames_dir, target_fps, output_video_path)
             vw, vh = _verify_playable(output_video_path)
             logger.info("Video %s playable: %dx%d", output_video_path.name, vw, vh)
-        finally:
+        except Exception:
+            # Jangan hapus frame kalau gagal - biar bisa diperiksa di server
+            logger.error("Encode video gagal. Frame JPG disimpan di %s", frames_dir)
+            raise
+        else:
             shutil.rmtree(frames_dir, ignore_errors=True)
         
         # Prepare result
