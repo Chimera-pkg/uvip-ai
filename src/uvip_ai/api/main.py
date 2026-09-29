@@ -51,16 +51,32 @@ def get_seg_model():
         logger.info("Model loaded successfully")
     return _seg_model_cache
 
+# Status akhir sebuah task: tidak akan berubah lagi, aman untuk dibersihkan
+TERMINAL_STATUSES = ("completed", "failed", "finished")
+
+
 def _cleanup_old_tasks():
-    """Hapus task data yang sudah selesai lebih dari TASK_CLEANUP_HOURS."""
-    now = datetime.utcnow()
-    to_remove = [
-        tid for tid, tdata in video_tasks.items()
-        if tdata["status"] in ["finished", "failed"]
-        and (now - tdata["started_at"]) > timedelta(hours=TASK_CLEANUP_HOURS)
-    ]
+    """Hapus task data yang sudah selesai lebih dari TASK_CLEANUP_HOURS.
+
+    Aman dipanggil kapan saja: task yang belum selesai / data lama yang tidak
+    lengkap akan dilewati, bukan memunculkan KeyError.
+    """
+    now_ts = time.time()
+    cutoff_seconds = TASK_CLEANUP_HOURS * 3600
+    to_remove = []
+    with video_tasks_lock:
+        for tid, tdata in list(video_tasks.items()):
+            if tdata.get("status") not in TERMINAL_STATUSES:
+                continue
+            # finished_at = kapan task selesai; created_at = fallback (task lama)
+            ts = tdata.get("finished_at") or tdata.get("created_at")
+            if not isinstance(ts, (int, float)):
+                continue
+            if (now_ts - ts) > cutoff_seconds:
+                to_remove.append(tid)
+        for tid in to_remove:
+            del video_tasks[tid]
     for tid in to_remove:
-        del video_tasks[tid]
         logger.info("Cleaned up old task: %s", tid)
 
 
@@ -73,7 +89,7 @@ app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
 
 # Build stamp - bukti versi kode yang benar-benar jalan (lihat GET /health)
-BUILD_STAMP = "jpg-h264-v4"
+BUILD_STAMP = "jpg-h264-v5-cleanup-fix"
 
 # Binary ffmpeg yang sudah terbukti bisa encode (diisi oleh _encode_h264_frames)
 _ffmpeg_exe_cache: Optional[str] = None
