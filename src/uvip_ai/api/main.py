@@ -93,8 +93,8 @@ def save_upload(file: UploadFile) -> Path:
         f.write(content)
     return path
 
-def _h264_encode(src: Path, dst: Path) -> bool:
-    """Re-encode mp4v -> H.264 + faststart supaya browser bisa play. False jika ffmpeg gagal/absen."""
+def _encode_h264(src: Path, dst: Path) -> None:
+    """Re-encode mp4v -> H.264 + faststart. Raise kalau gagal — jangan serve file blank."""
     import subprocess
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
@@ -104,16 +104,25 @@ def _h264_encode(src: Path, dst: Path) -> bool:
         except ImportError:
             ffmpeg = None
     if ffmpeg is None:
-        logger.warning("ffmpeg not found; mp4v output may not play in browsers")
-        return False
+        raise RuntimeError("ffmpeg tidak ada: install system ffmpeg atau pip install imageio-ffmpeg")
     cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", str(src),
            "-c:v", "libx264", "-pix_fmt", "yuv420p",
            "-movflags", "+faststart", "-preset", "veryfast", "-crf", "23", str(dst)]
-    r = subprocess.run(cmd, capture_output=True)
+    r = subprocess.run(cmd, capture_output=True, timeout=900)
     if r.returncode != 0:
-        logger.warning("ffmpeg encode failed: %s", r.stderr[-500:].decode(errors="ignore"))
-        return False
-    return True
+        raise RuntimeError(f"ffmpeg encode gagal: {r.stderr.decode(errors='ignore')[-1000:]}")
+
+
+def _verify_playable(path: Path) -> tuple[int, int]:
+    """Buka file hasil seperti browser/player. Return (w, h). Raise kalau tidak playable."""
+    if not path.exists() or path.stat().st_size == 0:
+        raise RuntimeError(f"video output kosong: {path}")
+    cap = cv2.VideoCapture(str(path))
+    ok, frame = cap.read()
+    cap.release()
+    if not ok or frame is None:
+        raise RuntimeError(f"video tidak bisa di-decode (codec tidak playable): {path.name}")
+    return frame.shape[1], frame.shape[0]
 
 def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int) -> dict:
     """Format metrics unified — sama persis untuk foto & video."""
@@ -253,7 +262,7 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
             raise ValueError(f"Cannot open video: {video_path}")
         
         original_fps = cap.get(cv2.CAP_PROP_FPS)
-        target_fps = fps if fps else original_fps
+        target_fps = fps if fps else (original_fps if original_fps and original_fps > 0 else 30.0)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
         with video_tasks_lock:
@@ -299,19 +308,24 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
         if not output_frames:
             raise ValueError("No frames processed")
         output_video_path = processor.output_dir / f"video_{task_id}.mp4"
+        raw_path = processor.output_dir / f"raw_{task_id}.mp4"
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         w, h = output_frames[0].shape[1], output_frames[0].shape[0]
-        out = cv2.VideoWriter(str(output_video_path), fourcc, target_fps, (w, h))
+        out = cv2.VideoWriter(str(raw_path), fourcc, target_fps, (w, h))
         if not out.isOpened():
-            raise RuntimeError("VideoWriter failed to open output file")
+            raise RuntimeError("VideoWriter gagal buka output (codec/dimensi invalid)")
         for frame in output_frames:
             out.write(frame)
         out.release()
 
-        # Browser tidak bisa decode mp4v (MPEG-4 Part 2) -> re-encode H.264
-        h264_tmp = output_video_path.with_name(output_video_path.stem + "_h264.mp4")
-        if _h264_encode(output_video_path, h264_tmp):
-            h264_tmp.replace(output_video_path)
+        # mp4v (MPEG-4 Part 2) tidak di-decode browser -> wajib H.264.
+        # Gagal di titik mana pun = task failed, bukan file blank.
+        h264_tmp = processor.output_dir / f"h264_{task_id}.mp4"
+        _encode_h264(raw_path, h264_tmp)
+        vw, vh = _verify_playable(h264_tmp)
+        logger.info("Video %s playable: %dx%d", output_video_path.name, vw, vh)
+        h264_tmp.replace(output_video_path)
+        raw_path.unlink(missing_ok=True)
         
         # Prepare result
         processing_time_ms = int((time.time() - start_time) * 1000)
