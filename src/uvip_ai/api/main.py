@@ -89,7 +89,7 @@ app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
 
 # Build stamp - bukti versi kode yang benar-benar jalan (lihat GET /health)
-BUILD_STAMP = "jpg-h264-v7-encoder-matrix"
+BUILD_STAMP = "jpg-h264-v9-threadpool"
 
 # Binary ffmpeg yang sudah terbukti bisa encode (diisi oleh _encode_h264_frames)
 _ffmpeg_exe_cache: Optional[str] = None
@@ -122,10 +122,12 @@ async def health_ffmpeg():
         for exe in _ffmpeg_candidates():
             ok_even, det_even = _probe_ffmpeg(exe, even)
             ok_odd, det_odd = _probe_ffmpeg(exe, odd)
+            h264_even, det_h264 = _probe_ffmpeg(exe, even, h264_only=True)
             rows.append({
                 "path": exe, "version": _ffmpeg_version(exe),
                 "encoders": _ffmpeg_encoders(exe),
                 "encode_ok": ok_even, "detail": det_even,
+                "h264_ok": h264_even, "h264_detail": det_h264,
                 "odd_dims_ok": ok_odd, "odd_dims_detail": det_odd,
             })
     return {"build": BUILD_STAMP, "candidates": rows,
@@ -135,7 +137,10 @@ async def health_ffmpeg():
             "startup_selftest": _encode_selftest,
             "hint": "encode_ok=false di semua kandidat -> "
                     "apt-get update && apt-get install -y --reinstall ffmpeg. "
-                    "encode_ok=true lewat enc=mpeg4 berarti libx264 rusak/hilang."}
+                    "encode_ok=true tapi h264_ok=false berarti libx264 rusak "
+                    "dan video akan turun ke mpeg4 (mis. ffmpeg 6.1.1-3ubuntu5); "
+                    "perbaiki dengan memasang imageio-ffmpeg (pip install "
+                    "imageio-ffmpeg) atau ffmpeg yang libx264-nya sehat."}
 
 
 class ProcessRequest(BaseModel):
@@ -155,13 +160,17 @@ def save_upload(file: UploadFile) -> Path:
     return path
 
 def _ffmpeg_candidates() -> list:
-    """Daftar binary ffmpeg yang mungkin dipakai, urut prioritas."""
+    """Daftar binary ffmpeg yang mungkin dipakai, urut prioritas.
+
+    imageio-ffmpeg didahulukan karena binary-nya static build yang libx264-nya
+    hampir selalu sehat. ffmpeg distro (/usr/bin/ffmpeg) ditaruh SETELAHNYA:
+    di banyak image (mis. ffmpeg 6.1.1-3ubuntu5) libx264 ada di `-encoders`
+    tapi gagal dibuka saat encode, dan karena urutan lama mencoba distro dulu,
+    hasilnya selalu jatuh ke mpeg4 walau ada binary sehat yang belum dicoba.
+    """
     cands = []
     if _ffmpeg_exe_cache and Path(_ffmpeg_exe_cache).exists():
         cands.append(_ffmpeg_exe_cache)
-    sys_ff = shutil.which("ffmpeg")
-    if sys_ff and sys_ff not in cands:
-        cands.append(sys_ff)
     try:
         from imageio_ffmpeg import get_ffmpeg_exe
         exe = get_ffmpeg_exe()
@@ -169,6 +178,9 @@ def _ffmpeg_candidates() -> list:
             cands.append(exe)
     except Exception as exc:  # ImportError / RuntimeError / dll.
         logger.warning("imageio-ffmpeg tidak tersedia: %s", exc)
+    sys_ff = shutil.which("ffmpeg")
+    if sys_ff and sys_ff not in cands:
+        cands.append(sys_ff)
     return cands
 
 
@@ -253,21 +265,27 @@ def _ffmpeg_encoders(exe: str) -> list:
     return found
 
 
-def _probe_ffmpeg(exe: str, sample_frame: Path, fps: float = 25.0) -> tuple:
-    """Buktikan binary ini BENAR-BENAR bisa encode dari 1 frame JPG.
+def _probe_ffmpeg(exe: str, sample_frame: Path, fps: float = 25.0,
+                  h264_only: bool = False) -> tuple:
+    """Bukti binary ini BENAR-BENAR bisa encode dari 1 frame JPG.
 
     Return (ok: bool, detail: str). Beberapa build ffmpeg (mis. di container)
     punya libx264 yang gagal dibuka walau `-version` normal, jadi `-version`
     saja tidak cukup sebagai bukti.
+
+    h264_only=True melewatkan jaring mpeg4, sehingga "ok" di sini berarti
+    H.264 benar-benar tersedia (bukan sekadar bisa encode apa saja).
 
     Urutan filter/encoder di sini HARUS sama dengan encode asli, supaya
     encoder yang sehat tidak dianggap rusak hanya karena beda filter.
     """
     import tempfile
     last = ""
+    attempts = [a for a in ENCODE_ATTEMPTS
+                if a[0].startswith("lib")] if h264_only else ENCODE_ATTEMPTS
     with tempfile.TemporaryDirectory() as td:
         for chain_name, vf in FILTER_CHAINS:
-            for enc, enc_opts in ENCODE_ATTEMPTS:
+            for enc, enc_opts in attempts:
                 out = Path(td) / "probe.mp4"
                 cmd = [exe, "-y", "-loglevel", "error", "-hide_banner",
                        "-framerate", f"{fps}", "-i", str(sample_frame)]
@@ -302,20 +320,24 @@ def _startup_encode_selftest() -> None:
                 return
             results = {}
             for exe in _ffmpeg_candidates():
-                ok, detail = _probe_ffmpeg(exe, probe)
+                ok, detail = _probe_ffmpeg(exe, probe, h264_only=True)
                 results[exe] = {"ok": ok, "detail": detail,
+                                "h264": ok,
                                 "version": _ffmpeg_version(exe)}
-                logger.info("Self-test encode %s: %s", exe,
+                logger.info("Self-test encode H.264 %s: %s", exe,
                             detail if ok else f"GAGAL - {detail}")
             _encode_selftest = {
                 "status": "ok" if any(v["ok"] for v in results.values()) else "failed",
+                "h264_available": any(v["ok"] for v in results.values()),
                 "results": results,
             }
             if _encode_selftest["status"] == "failed":
                 logger.error(
-                    "SEMUA ffmpeg gagal encode saat startup. Proses video akan "
-                    "gagal sampai ini diperbaiki: apt-get update && "
-                    "apt-get install -y --reinstall ffmpeg")
+                    "SEMUA ffmpeg gagal encode H.264 saat startup. Video akan "
+                    "turun ke mpeg4 (tidak playable di sebagian browser) sampai "
+                    "ini diperbaiki: apt-get update && "
+                    "apt-get install -y --reinstall ffmpeg, atau pastikan "
+                    "imageio-ffmpeg terpasang (pip install imageio-ffmpeg)")
     except Exception as exc:  # jangan sampai bikin app gagal start
         _encode_selftest = {"status": "error", "error": str(exc)}
         logger.warning("Self-test encode error: %s", exc)
@@ -331,9 +353,16 @@ async def _on_startup() -> None:
 def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
     """Encode urutan JPG -> MP4. Coba matriks binary x filter x encoder.
 
-    Strategi: encoder pertama yang berhasil dipakai. H.264 diutamakan supaya
-    hasilnya playable di browser; mpeg4 hanya jaring terakhir (dengan
-    peringatan) agar task tidak gagal total di container yang H.264-nya rusak.
+    Strategi dua tahap supaya hasil H.264 benar-benar diusahakan:
+      Tahap 1 - semua binary x filter x encoder H.264 (libx264/libopenh264).
+                Satu binary yang libx264-nya rusak tidak menghentikan tahap ini;
+                binary lain yang sehat tetap dicoba.
+      Tahap 2 - mpeg4 pada semua binary, hanya kalau SELURUH H.264 gagal.
+                Ini jaring terakhir supaya task tidak gagal total, dan selalu
+                disertai peringatan keras.
+    Urutan lama (binary luar, encoder dalam) membuat binary pertama yang
+    libx264-nya rusak langsung jatuh ke mpeg4 tanpa pernah mencoba binary
+    berikutnya - itu penyebab hasil selalu mpeg4 di server.
     """
     global _ffmpeg_exe_cache
 
@@ -357,38 +386,54 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
             "ffmpeg tidak ditemukan. Install: apt-get install -y ffmpeg "
             "atau pip install --force-reinstall imageio-ffmpeg")
 
+    h264_attempts = [a for a in ENCODE_ATTEMPTS if a[0].startswith("lib")]
+    fallback_attempts = [a for a in ENCODE_ATTEMPTS if not a[0].startswith("lib")]
+
     problems = []
+
+    def _try(exe: str, enc: str, enc_opts: list, vf, chain_name: str) -> bool:
+        global _ffmpeg_exe_cache
+        cmd = [exe, "-y", "-loglevel", "error", "-hide_banner",
+               "-framerate", f"{fps}", "-i", pattern]
+        if vf:
+            cmd += ["-vf", vf]
+        cmd += ["-c:v", enc, "-pix_fmt", "yuv420p", *enc_opts,
+                "-movflags", "+faststart", str(dst)]
+        logger.info("ffmpeg: %s", " ".join(cmd))
+        ok, detail = _run_ffmpeg(cmd, timeout=900)
+        if ok and dst.exists() and dst.stat().st_size > 0:
+            # cache hanya diisi setelah encode TERBUKTI berhasil
+            _ffmpeg_exe_cache = exe
+            if enc != "libx264":
+                logger.warning(
+                    "Encode sukses tapi BUKAN H.264 (enc=%s, filter=%s). "
+                    "Pasang ffmpeg dengan libx264: apt-get update && "
+                    "apt-get install -y --reinstall ffmpeg", enc, chain_name)
+            logger.info("Encode sukses: %s enc=%s filter=%s (%d frame, %d byte)",
+                        exe, enc, chain_name, n_frames, dst.stat().st_size)
+            return True
+        logger.warning("encode gagal enc=%s filter=%s: %s", enc, chain_name, detail)
+        problems.append(
+            f"{exe} [enc={enc},filter={chain_name}] "
+            f"[{_ffmpeg_version(exe)}]: {detail}")
+        return False
+
+    # Tahap 1: H.264 di semua binary dulu.
     for exe in candidates:
         ok, detail = _probe_ffmpeg(exe, frames[0], fps)
         logger.info("Probe %s [%s]: %s", exe, _ffmpeg_version(exe),
                     detail if ok else f"GAGAL - {detail}")
-
         for chain_name, vf in FILTER_CHAINS:
-            for enc, enc_opts in ENCODE_ATTEMPTS:
-                cmd = [exe, "-y", "-loglevel", "error", "-hide_banner",
-                       "-framerate", f"{fps}", "-i", pattern]
-                if vf:
-                    cmd += ["-vf", vf]
-                cmd += ["-c:v", enc, "-pix_fmt", "yuv420p", *enc_opts,
-                        "-movflags", "+faststart", str(dst)]
-                logger.info("ffmpeg: %s", " ".join(cmd))
-                ok, detail = _run_ffmpeg(cmd, timeout=900)
-                if ok and dst.exists() and dst.stat().st_size > 0:
-                    # cache hanya diisi setelah encode TERBUKTI berhasil
-                    _ffmpeg_exe_cache = exe
-                    if enc != "libx264":
-                        logger.warning(
-                            "Encode sukses tapi BUKAN H.264 (enc=%s, filter=%s). "
-                            "Pasang ffmpeg dengan libx264: apt-get update && "
-                            "apt-get install -y --reinstall ffmpeg", enc, chain_name)
-                    logger.info("Encode sukses: %s enc=%s filter=%s (%d frame, %d byte)",
-                                exe, enc, chain_name, n_frames, dst.stat().st_size)
+            for enc, enc_opts in h264_attempts:
+                if _try(exe, enc, enc_opts, vf, chain_name):
                     return
-                logger.warning("encode gagal enc=%s filter=%s: %s",
-                               enc, chain_name, detail)
-                problems.append(
-                    f"{exe} [enc={enc},filter={chain_name}] "
-                    f"[{_ffmpeg_version(exe)}]: {detail}")
+
+    # Tahap 2: baru mpeg4, setelah semua H.264 di semua binary gagal.
+    for exe in candidates:
+        for chain_name, vf in FILTER_CHAINS:
+            for enc, enc_opts in fallback_attempts:
+                if _try(exe, enc, enc_opts, vf, chain_name):
+                    return
 
     raise RuntimeError(
         f"semua ffmpeg gagal encode (fps={fps}, frames={n_frames}). "
@@ -525,7 +570,10 @@ def post_process(path: Path) -> dict:
         import traceback
         logger.error("Processing error: %s\n%s", str(e), traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
-async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overlay_alpha: float, photo_id: Optional[str]):
+def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overlay_alpha: float, photo_id: Optional[str]):
+    # Sync (bukan async): Starlette menjalankannya di threadpool, jadi infer
+    # PyTorch yang blocking tidak membekukan event loop (status/result 404/202
+    # palsu). Jangan jadikan async lagi tanpa executor.
     """Background task untuk process video frame-by-frame dengan segmentation."""
     try:
         from uvip_ai.pipeline.video_processor import VideoProcessor
@@ -537,7 +585,9 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
         
         # Initialize models (lazy load) — use cached instance with CUDA probe
         logger.info("Loading models for video task %s...", task_id)
+        t0 = time.time()
         seg_model = get_seg_model()
+        logger.info("Model ready for task %s in %.0fs", task_id, time.time() - t0)
         processor = VideoProcessor()
         
         # Open video
@@ -553,6 +603,7 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
         
         with video_tasks_lock:
             video_tasks[task_id]["total_frames"] = total_frames
+            video_tasks[task_id]["phase"] = "processing_0"
             video_tasks[task_id]["video_info"] = {
                 "original_fps": original_fps,
                 "target_fps": target_fps,
@@ -577,12 +628,14 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
             output_frames.append(overlay)
             
             # Update progress
-            video_tasks[task_id]["frames_processed"] = len(output_frames)
-            
+            with video_tasks_lock:
+                video_tasks[task_id]["frames_processed"] = len(output_frames)
+
             if frame_idx % 10 == 0:
+                logger.info("Task %s: frame %d/%s", task_id, frame_idx, total_frames)
                 with video_tasks_lock:
                     video_tasks[task_id]["phase"] = f"processing_{frame_idx}_{total_frames}"
-            
+
             frame_idx += 1
         
         cap.release()
@@ -648,9 +701,10 @@ async def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], 
         logger.info("✅ Video task %s completed: %s frames in %dms", 
                     task_id, len(output_frames), processing_time_ms)
         
-        # Post to backend if photo_id provided
+        # Post to backend if photo_id provided (sync worker: jalankan coroutine via asyncio.run)
         if photo_id:
-            await _post_result_to_backend(photo_id, result_response)
+            import asyncio
+            asyncio.run(_post_result_to_backend(photo_id, result_response))
     
     except Exception as e:
         import traceback
@@ -776,7 +830,7 @@ async def list_video_tasks(status: Optional[str] = None):
         result.append(task_info)
 
     result.sort(key=lambda x: x["created_at"], reverse=True)
-
+    return result
 async def _post_result_to_backend(photo_id: str, result: dict):
     """Kirim hasil segmentasi ke backend-uvip untuk disimpan ke DB."""
     from uvip_ai.config import settings

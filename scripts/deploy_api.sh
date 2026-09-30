@@ -40,6 +40,23 @@ if [ -z "$PYTHON" ]; then
 fi
 echo "==> Python: $PYTHON ($("$PYTHON" -V 2>&1))"
 
+# --- pastikan ffmpeg statik yang sehat tersedia --------------------------
+# Insiden 2026-09-29: server hanya punya /usr/bin/ffmpeg (6.1.1-3ubuntu5) yang
+# libx264-nya ada di `-encoders` tapi gagal dibuka. Tanpa imageio-ffmpeg,
+# satu-satunya kandidat = binary rusak itu, dan setiap video turun ke mpeg4.
+# Lebih baik dipasang di sini daripada ketahuan saat user upload video.
+if "$PYTHON" -c "import imageio_ffmpeg" >/dev/null 2>&1; then
+    echo "==> imageio-ffmpeg: OK ($("$PYTHON" -c 'import imageio_ffmpeg as m; print(m.get_ffmpeg_exe())'))"
+else
+    echo "!! imageio-ffmpeg belum terpasang di $PYTHON - mencoba memasang..."
+    if "$PYTHON" -m pip install --quiet "imageio-ffmpeg>=0.5.0"; then
+        echo "==> imageio-ffmpeg terpasang: $("$PYTHON" -c 'import imageio_ffmpeg as m; print(m.get_ffmpeg_exe())')"
+    else
+        echo "!! GAGAL memasang imageio-ffmpeg. Encode akan bergantung pada ffmpeg"
+        echo "!! distro; kalau libx264-nya rusak, video akan turun ke mpeg4."
+    fi
+fi
+
 # --- pull ---------------------------------------------------------------
 if [ "${SKIP_PULL:-0}" != "1" ]; then
     BRANCH="${BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
@@ -133,14 +150,28 @@ import json, sys
 d = json.load(sys.stdin)
 rows = d.get("candidates", [])
 ok = [c["path"] for c in rows if c.get("encode_ok")]
+h264 = [c["path"] for c in rows if c.get("h264_ok")]
 for c in rows:
-    print(("  OK  " if c.get("encode_ok") else "  FAIL") + " " + c["path"])
-sys.exit(0 if ok else 1)
+    tag = "OK  " if c.get("h264_ok") else ("mpeg4-only" if c.get("encode_ok") else "FAIL")
+    print(("  " + tag.ljust(10)) + " " + c["path"])
+if not ok:
+    sys.exit(1)
+if not h264:
+    print("!! Ada ffmpeg yang bisa encode, TAPI tidak ada yang bisa H.264.")
+    print("!! Video akan turun ke mpeg4 (tidak playable di sebagian browser).")
+    print("!! Perbaiki: pip install imageio-ffmpeg, atau apt-get install -y --reinstall ffmpeg")
+    sys.exit(2)
+sys.exit(0)
 '; then
-    echo "OK: ada ffmpeg yang benar-benar bisa encode"
+    echo "OK: ada ffmpeg dengan H.264 sehat"
 else
-    echo "!! SEMUA ffmpeg di server ini gagal encode. Proses video akan gagal."
-    echo "!! Perbaiki: apt-get update && apt-get install -y --reinstall ffmpeg"
+    RC=$?
+    if [ "$RC" = "2" ]; then
+        echo "!! Gerbang H.264 gagal: libx264/libopenh264 rusak di semua binary."
+    else
+        echo "!! SEMUA ffmpeg di server ini gagal encode. Proses video akan gagal."
+        echo "!! Perbaiki: apt-get update && apt-get install -y --reinstall ffmpeg"
+    fi
     exit 1
 fi
 
