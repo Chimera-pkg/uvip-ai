@@ -24,7 +24,6 @@ from fastapi import BackgroundTasks
 import fastapi
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import httpx
 
@@ -82,14 +81,46 @@ def _cleanup_old_tasks():
 
 app = fastapi.FastAPI(title="UVIP-AI API", version="0.1.0")
 
-# Serve static files dari uploads/
-uploads_dir = Path("uploads")
+# Serve static files dari uploads/ — ABSOLUTE ke repo root.
+# Dulu relatif (Path("uploads")) sehingga restart dari cwd berbeda bikin file
+# "hilang" (tertulis di folder lain, diserve dari folder lain). Sekarang satu lokasi pasti.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+uploads_dir = REPO_ROOT / "uploads"
 uploads_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
+
+
+@app.get("/uploads/{rel_path:path}")
+async def serve_upload(rel_path: str):
+    """Serve file uploads/ TANPA cache + dengan range support.
+
+    Cache-Control: no-store — browser/proxy selalu unduh ulang, tidak ada
+    304. File video tidak pernah dioverwrite (nama unik video_<id>.mp4) dan
+    tidak pernah dihapus, jadi yang diserve selalu file asli di disk.
+    Catatan: 206 Partial Content akan TETAP muncul — itu bukan cache, itu
+    cara browser streaming video (minta per potong supaya bisa seek).
+    """
+    from fastapi.responses import FileResponse
+    safe = (uploads_dir / rel_path.lstrip("/")).resolve()
+    if uploads_dir not in safe.parents and safe != uploads_dir:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not safe.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    suffix = safe.suffix.lower()
+    media_type = {
+        ".mp4": "video/mp4", ".webm": "video/webm", ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg", ".png": "image/png", ".json": "application/json",
+    }.get(suffix, "application/octet-stream")
+    return FileResponse(
+        str(safe), media_type=media_type,
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Accept-Ranges": "bytes",
+        },
+    )
 
 
 # Build stamp - bukti versi kode yang benar-benar jalan (lihat GET /health)
-BUILD_STAMP = "jpg-h264-v9-threadpool"
+BUILD_STAMP = "jpg-h264-v12-strict-h264"
 
 # Binary ffmpeg yang sudah terbukti bisa encode (diisi oleh _encode_h264_frames)
 _ffmpeg_exe_cache: Optional[str] = None
@@ -137,10 +168,10 @@ async def health_ffmpeg():
             "startup_selftest": _encode_selftest,
             "hint": "encode_ok=false di semua kandidat -> "
                     "apt-get update && apt-get install -y --reinstall ffmpeg. "
-                    "encode_ok=true tapi h264_ok=false berarti libx264 rusak "
-                    "dan video akan turun ke mpeg4 (mis. ffmpeg 6.1.1-3ubuntu5); "
-                    "perbaiki dengan memasang imageio-ffmpeg (pip install "
-                    "imageio-ffmpeg) atau ffmpeg yang libx264-nya sehat."}
+                    "h264_ok=false di semua kandidat (mis. ffmpeg 6.1.1-3ubuntu5) "
+                    "berarti task video GAGAL dengan jelas — mpeg4 SENGAJA tidak "
+                    "ditulis karena tidak playable di browser; perbaiki dengan "
+                    "imageio-ffmpeg (pip install imageio-ffmpeg)."}
 
 
 class ProcessRequest(BaseModel):
@@ -163,10 +194,7 @@ def _ffmpeg_candidates() -> list:
     """Daftar binary ffmpeg yang mungkin dipakai, urut prioritas.
 
     imageio-ffmpeg didahulukan karena binary-nya static build yang libx264-nya
-    hampir selalu sehat. ffmpeg distro (/usr/bin/ffmpeg) ditaruh SETELAHNYA:
-    di banyak image (mis. ffmpeg 6.1.1-3ubuntu5) libx264 ada di `-encoders`
-    tapi gagal dibuka saat encode, dan karena urutan lama mencoba distro dulu,
-    hasilnya selalu jatuh ke mpeg4 walau ada binary sehat yang belum dicoba.
+    hampir selalu sehat. ffmpeg distro (/usr/bin/ffmpeg) ditaruh SETELAHNYA.
     """
     cands = []
     if _ffmpeg_exe_cache and Path(_ffmpeg_exe_cache).exists():
@@ -197,14 +225,13 @@ FILTER_CHAINS = [
     ("none", None),
 ]
 
-# Encoder yang dicoba berurutan per rantai filter. Dua pertama tetap H.264
-# (playable di browser). mpeg4 hanya jaring terakhir supaya task tidak gagal
-# total kalau seluruh build H.264 rusak - dipakai dengan peringatan keras.
+# Encoder H.264 saja. mpeg4 SENGAJA tidak ada di daftar: VLC muter mpeg4
+# tapi Chrome/Firefox (<video>) tidak. Fallback mpeg4 = task "sukses" yang
+# tidak bisa diplay di web. Kalau semua H.264 gagal, task GAGAL dengan jelas.
 ENCODE_ATTEMPTS = [
     ("libx264", ["-preset", "veryfast", "-crf", "23"]),
     ("libx264", ["-preset", "veryfast", "-b:v", "4M"]),
     ("libopenh264", ["-b:v", "4M"]),
-    ("mpeg4", ["-q:v", "3"]),
 ]
 
 # Hasil self-test encoder saat startup (dilihat di GET /health).
@@ -333,11 +360,11 @@ def _startup_encode_selftest() -> None:
             }
             if _encode_selftest["status"] == "failed":
                 logger.error(
-                    "SEMUA ffmpeg gagal encode H.264 saat startup. Video akan "
-                    "turun ke mpeg4 (tidak playable di sebagian browser) sampai "
-                    "ini diperbaiki: apt-get update && "
-                    "apt-get install -y --reinstall ffmpeg, atau pastikan "
-                    "imageio-ffmpeg terpasang (pip install imageio-ffmpeg)")
+                    "SEMUA ffmpeg gagal encode H.264 saat startup. Task video "
+                    "akan GAGAL (bukan turun ke mpeg4) sampai ini diperbaiki: "
+                    "apt-get update && apt-get install -y --reinstall ffmpeg, "
+                    "atau pastikan imageio-ffmpeg terpasang "
+                    "(pip install imageio-ffmpeg)")
     except Exception as exc:  # jangan sampai bikin app gagal start
         _encode_selftest = {"status": "error", "error": str(exc)}
         logger.warning("Self-test encode error: %s", exc)
@@ -351,18 +378,13 @@ async def _on_startup() -> None:
 
 
 def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
-    """Encode urutan JPG -> MP4. Coba matriks binary x filter x encoder.
+    """Encode urutan JPG -> MP4 H.264 (browser-playable). TANPA fallback mpeg4.
 
-    Strategi dua tahap supaya hasil H.264 benar-benar diusahakan:
-      Tahap 1 - semua binary x filter x encoder H.264 (libx264/libopenh264).
-                Satu binary yang libx264-nya rusak tidak menghentikan tahap ini;
-                binary lain yang sehat tetap dicoba.
-      Tahap 2 - mpeg4 pada semua binary, hanya kalau SELURUH H.264 gagal.
-                Ini jaring terakhir supaya task tidak gagal total, dan selalu
-                disertai peringatan keras.
-    Urutan lama (binary luar, encoder dalam) membuat binary pertama yang
-    libx264-nya rusak langsung jatuh ke mpeg4 tanpa pernah mencoba binary
-    berikutnya - itu penyebab hasil selalu mpeg4 di server.
+    Keputusan sadar 2026-09-30: mpeg4 bisa diputar VLC tapi TIDAK oleh
+    Chrome/Firefox <video> — fallback itu menghasilkan task "completed" yang
+    tidak bisa diplay di kondisi normal. Jadi kalau seluruh H.264 gagal,
+    fungsi ini raise RuntimeError (task jadi "failed" dengan pesan jelas)
+    alih-alih menulis file mpeg4 yang menipu.
     """
     global _ffmpeg_exe_cache
 
@@ -387,7 +409,6 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
             "atau pip install --force-reinstall imageio-ffmpeg")
 
     h264_attempts = [a for a in ENCODE_ATTEMPTS if a[0].startswith("lib")]
-    fallback_attempts = [a for a in ENCODE_ATTEMPTS if not a[0].startswith("lib")]
 
     problems = []
 
@@ -406,9 +427,8 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
             _ffmpeg_exe_cache = exe
             if enc != "libx264":
                 logger.warning(
-                    "Encode sukses tapi BUKAN H.264 (enc=%s, filter=%s). "
-                    "Pasang ffmpeg dengan libx264: apt-get update && "
-                    "apt-get install -y --reinstall ffmpeg", enc, chain_name)
+                    "Encode sukses tapi BUKAN libx264 (enc=%s, filter=%s).",
+                    enc, chain_name)
             logger.info("Encode sukses: %s enc=%s filter=%s (%d frame, %d byte)",
                         exe, enc, chain_name, n_frames, dst.stat().st_size)
             return True
@@ -428,18 +448,12 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
                 if _try(exe, enc, enc_opts, vf, chain_name):
                     return
 
-    # Tahap 2: baru mpeg4, setelah semua H.264 di semua binary gagal.
-    for exe in candidates:
-        for chain_name, vf in FILTER_CHAINS:
-            for enc, enc_opts in fallback_attempts:
-                if _try(exe, enc, enc_opts, vf, chain_name):
-                    return
-
     raise RuntimeError(
-        f"semua ffmpeg gagal encode (fps={fps}, frames={n_frames}). "
+        f"semua ffmpeg gagal encode H.264 (fps={fps}, frames={n_frames}). "
+        "Hasil mpeg4 SENGAJA tidak ditulis karena tidak playable di browser. "
         + " || ".join(problems)
         + " || Cek GET /health/ffmpeg lalu: apt-get update && "
-          "apt-get install -y --reinstall ffmpeg")
+          "apt-get install -y --reinstall ffmpeg, atau pip install imageio-ffmpeg")
 
 
 def _verify_playable(path: Path) -> tuple[int, int]:
@@ -508,13 +522,10 @@ def post_process(path: Path) -> dict:
         
         # Prepare output
         metrics = result["metrics"]
-        seg_map = result["seg_map"]
-        pct_by_class = result.get("pct_by_class", {})
-        
         # Save segmentation visualization and mask
-        seg_dir = Path("uploads") / "segmentation"
+        seg_dir = uploads_dir / "segmentation"
         seg_dir.mkdir(parents=True, exist_ok=True)
-        masks_dir = Path("uploads") / "masks"
+        masks_dir = uploads_dir / "masks"
         masks_dir.mkdir(parents=True, exist_ok=True)
         timestamp = int(time.time() * 1000)
         file_stem = Path(path).stem
@@ -554,9 +565,8 @@ def post_process(path: Path) -> dict:
             "segmentation_overlay_url": f"/uploads/segmentation/{overlay_path.name}",
             **unified,
         }
-        
-        # Save detailed results JSON
-        json_dir = Path("uploads") / "results"
+
+        json_dir = uploads_dir / "results"
         json_dir.mkdir(parents=True, exist_ok=True)
         json_path = json_dir / f"result_{file_stem}_{timestamp}.json"
         with open(json_path, 'w') as f:
@@ -687,7 +697,7 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
             "processing_time_ms": processing_time_ms,
             **unified,
         }
-        json_dir = Path("uploads") / "results"
+        json_dir = uploads_dir / "results"
         json_dir.mkdir(parents=True, exist_ok=True)
         json_path = json_dir / f"result_video_{task_id}.json"
         with open(json_path, "w") as f:
