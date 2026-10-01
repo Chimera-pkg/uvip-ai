@@ -120,7 +120,7 @@ async def serve_upload(rel_path: str):
 
 
 # Build stamp - bukti versi kode yang benar-benar jalan (lihat GET /health)
-BUILD_STAMP = "jpg-h264-v12-strict-h264"
+BUILD_STAMP = "jpg-h264-v13-fps-and-format"
 
 # Binary ffmpeg yang sudah terbukti bisa encode (diisi oleh _encode_h264_frames)
 _ffmpeg_exe_cache: Optional[str] = None
@@ -393,7 +393,7 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
         fps = float(fps)
     except (TypeError, ValueError):
         fps = 0.0
-    if not (fps > 0 and fps < 1000):
+    if not (0.1 <= fps <= 120):
         fps = 25.0
 
     frames = sorted(frames_dir.glob("f_*.jpg"))
@@ -415,11 +415,11 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
     def _try(exe: str, enc: str, enc_opts: list, vf, chain_name: str) -> bool:
         global _ffmpeg_exe_cache
         cmd = [exe, "-y", "-loglevel", "error", "-hide_banner",
-               "-framerate", f"{fps}", "-i", pattern]
+               "-framerate", f"{fps:.6f}", "-i", pattern]
         if vf:
             cmd += ["-vf", vf]
-        cmd += ["-c:v", enc, "-pix_fmt", "yuv420p", *enc_opts,
-                "-movflags", "+faststart", str(dst)]
+        cmd += ["-c:v", enc, "-pix_fmt", "yuv420p", "-r", f"{fps:.6f}",
+                *enc_opts, "-movflags", "+faststart", str(dst)]
         logger.info("ffmpeg: %s", " ".join(cmd))
         ok, detail = _run_ffmpeg(cmd, timeout=900)
         if ok and dst.exists() and dst.stat().st_size > 0:
