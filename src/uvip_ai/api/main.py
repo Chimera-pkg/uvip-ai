@@ -1,4 +1,3 @@
-"""UVIP-AI API server - process foto/video dengan AI segmentation."""
 
 from __future__ import annotations
 
@@ -448,9 +447,39 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
                 if _try(exe, enc, enc_opts, vf, chain_name):
                     return
 
+    # Tahap 2: jaring terakhir - tulis MPEG-4 (Part 2 / ASP) dan VERIFIKASI.
+    # H.264 dapat ditolak di server yang build/ffmpeg-nya rusak tanpa cara
+    # nyata untuk memperbaikinya saat itu juga. mpeg4 ada di SEMUA build
+    # ffmpeg dan di-decode OpenCV, jadi task tetap sukses. catatan: mpeg4
+    # tidak diputar Chrome <video>, tapi file tetap bisa diunduh & diputar
+    # VLC/QuickTime - lebih baik dari task gagal total.
+    for exe in candidates:
+        for chain_name, vf in (("pad+format", f"{PAD_FILTER},format=yuv420p"),
+                               ("none", None)):
+            cmd = [exe, "-y", "-loglevel", "error", "-hide_banner",
+                   "-framerate", f"{fps:.6f}", "-i", pattern]
+            if vf:
+                cmd += ["-vf", vf]
+            cmd += ["-c:v", "mpeg4", "-pix_fmt", "yuv420p", "-r", f"{fps:.6f}",
+                    "-q:v", "3", "-movflags", "+faststart", str(dst)]
+            logger.info("ffmpeg: %s", " ".join(cmd))
+            ok, detail = _run_ffmpeg(cmd, timeout=900)
+            if ok and dst.exists() and dst.stat().st_size > 0:
+                try:
+                    w, h = _verify_playable(dst)
+                except Exception as verr:
+                    logger.warning("mpeg4 hasil tak playable (%s), coba lagi", verr)
+                    continue
+                _ffmpeg_exe_cache = exe
+                logger.warning(
+                    "Encode sukses VIA MPEG4 fallback (bukan H.264): %s (%dx%d, %d frame)",
+                    exe, w, h, n_frames)
+                return
+            logger.warning("mpeg4 gagal enc=%s filter=%s: %s", "mpeg4", chain_name, detail)
+            problems.append(f"{exe} [enc=mpeg4,filter={chain_name}]: {detail}")
+
     raise RuntimeError(
-        f"semua ffmpeg gagal encode H.264 (fps={fps}, frames={n_frames}). "
-        "Hasil mpeg4 SENGAJA tidak ditulis karena tidak playable di browser. "
+        f"semua ffmpeg gagal encode (termasuk mpeg4) (fps={fps}, frames={n_frames}). "
         + " || ".join(problems)
         + " || Cek GET /health/ffmpeg lalu: apt-get update && "
           "apt-get install -y --reinstall ffmpeg, atau pip install imageio-ffmpeg")
@@ -519,9 +548,9 @@ def post_process(path: Path) -> dict:
         
         # Run inference
         result = seg.infer(image, excel_mode=True)
-        
-        # Prepare output
+        seg_map = result["seg_map"]
         metrics = result["metrics"]
+        pct_by_class = result["pct_by_class"]
         # Save segmentation visualization and mask
         seg_dir = uploads_dir / "segmentation"
         seg_dir.mkdir(parents=True, exist_ok=True)
@@ -543,9 +572,9 @@ def post_process(path: Path) -> dict:
         logger.info("💾 Segmentation saved: %s", seg_path)
         
         # Create privacy masked version (blur non-road areas)
-        mask_indices = np.isin(seg_map, [0, 1, 2, 6, 7, 8])  # road, sidewalk, building, wall, fence, pole
-        masked_image = image.copy()
-        masked_image[~mask_indices] = cv2.GaussianBlur(image[~mask_indices], (5, 5), 0)
+        keep_classes = np.isin(seg_map, [0, 1, 2, 6, 7, 8])  # road, sidewalk, building, wall, fence, pole
+        blurred = cv2.GaussianBlur(image, (5, 5), 0)
+        masked_image = np.where(keep_classes[..., None], image, blurred)
         mask_path = masks_dir / f"mask_{file_stem}_{timestamp}.jpg"
         cv2.imwrite(str(mask_path), masked_image)
         logger.info("🛡️ Privacy mask saved: %s", mask_path)
