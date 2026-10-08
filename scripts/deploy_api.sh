@@ -43,7 +43,8 @@ echo "==> Python: $PYTHON ($("$PYTHON" -V 2>&1))"
 # --- pastikan ffmpeg statik yang sehat tersedia --------------------------
 # Insiden 2026-09-29: server hanya punya /usr/bin/ffmpeg (6.1.1-3ubuntu5) yang
 # libx264-nya ada di `-encoders` tapi gagal dibuka. Tanpa imageio-ffmpeg,
-# satu-satunya kandidat = binary rusak itu, dan setiap video turun ke mpeg4.
+# satu-satunya kandidat = binary rusak itu, dan setiap request video GAGAL
+# (sejak v15 tidak ada lagi fallback mpeg4).
 # Lebih baik dipasang di sini daripada ketahuan saat user upload video.
 if "$PYTHON" -c "import imageio_ffmpeg" >/dev/null 2>&1; then
     echo "==> imageio-ffmpeg: OK ($("$PYTHON" -c 'import imageio_ffmpeg as m; print(m.get_ffmpeg_exe())'))"
@@ -53,7 +54,7 @@ else
         echo "==> imageio-ffmpeg terpasang: $("$PYTHON" -c 'import imageio_ffmpeg as m; print(m.get_ffmpeg_exe())')"
     else
         echo "!! GAGAL memasang imageio-ffmpeg. Encode akan bergantung pada ffmpeg"
-        echo "!! distro; kalau libx264-nya rusak, video akan turun ke mpeg4."
+        echo "!! distro; kalau libx264-nya rusak, SETIAP request video akan gagal."
     fi
 fi
 
@@ -158,7 +159,8 @@ if not ok:
     sys.exit(1)
 if not h264:
     print("!! Ada ffmpeg yang bisa encode, TAPI tidak ada yang bisa H.264.")
-    print("!! Video akan turun ke mpeg4 (tidak playable di sebagian browser).")
+    print("!! Sejak v15 tidak ada fallback mpeg4: request video akan GAGAL,")
+    print("!! bukan menghasilkan file yang tidak playable di browser.")
     print("!! Perbaiki: pip install imageio-ffmpeg, atau apt-get install -y --reinstall ffmpeg")
     sys.exit(2)
 sys.exit(0)

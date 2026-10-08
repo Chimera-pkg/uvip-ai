@@ -119,7 +119,7 @@ async def serve_upload(rel_path: str):
 
 
 # Build stamp - bukti versi kode yang benar-benar jalan (lihat GET /health)
-BUILD_STAMP = "jpg-h264-v13-fps-and-format"
+BUILD_STAMP = "jpg-h264-v15-libx264-limited-range"
 
 # Binary ffmpeg yang sudah terbukti bisa encode (diisi oleh _encode_h264_frames)
 _ffmpeg_exe_cache: Optional[str] = None
@@ -167,10 +167,11 @@ async def health_ffmpeg():
             "startup_selftest": _encode_selftest,
             "hint": "encode_ok=false di semua kandidat -> "
                     "apt-get update && apt-get install -y --reinstall ffmpeg. "
-                    "h264_ok=false di semua kandidat (mis. ffmpeg 6.1.1-3ubuntu5) "
-                    "berarti task video GAGAL dengan jelas — mpeg4 SENGAJA tidak "
-                    "ditulis karena tidak playable di browser; perbaiki dengan "
-                    "imageio-ffmpeg (pip install imageio-ffmpeg)."}
+                    "h264_ok=false di semua kandidat berarti task video GAGAL "
+                    "dengan jelas (mpeg4 SENGAJA tidak ditulis karena tidak "
+                    "playable di Chrome/Firefox <video>); perbaiki dengan "
+                    "ffmpeg distro (apt-get install -y ffmpeg) atau "
+                    "pip install imageio-ffmpeg."}
 
 
 class ProcessRequest(BaseModel):
@@ -192,12 +193,22 @@ def save_upload(file: UploadFile) -> Path:
 def _ffmpeg_candidates() -> list:
     """Daftar binary ffmpeg yang mungkin dipakai, urut prioritas.
 
-    imageio-ffmpeg didahulukan karena binary-nya static build yang libx264-nya
-    hampir selalu sehat. ffmpeg distro (/usr/bin/ffmpeg) ditaruh SETELAHNYA.
+    Urutan: (1) binary yang sudah TERBUKTI bisa encode (hasil self-test/probe
+    sebelumnya), (2) ffmpeg distro /usr/bin/ffmpeg, (3) binary static
+    imageio-ffmpeg.
+
+    ffmpeg distro didahulukan karena paket distro hampir selalu punya libx264
+    yang sehat. Binary static imageio-ffmpeg bisa punya libx264 rusak
+    (persis kasus di server: `h264_ok: false`) — dulu binary inilah yang
+    dicoba pertama, sehingga setiap task membuang waktu di encoder rusak
+    sebelum jatuh ke ffmpeg distro.
     """
     cands = []
     if _ffmpeg_exe_cache and Path(_ffmpeg_exe_cache).exists():
         cands.append(_ffmpeg_exe_cache)
+    sys_ff = shutil.which("ffmpeg")
+    if sys_ff and sys_ff not in cands:
+        cands.append(sys_ff)
     try:
         from imageio_ffmpeg import get_ffmpeg_exe
         exe = get_ffmpeg_exe()
@@ -205,9 +216,6 @@ def _ffmpeg_candidates() -> list:
             cands.append(exe)
     except Exception as exc:  # ImportError / RuntimeError / dll.
         logger.warning("imageio-ffmpeg tidak tersedia: %s", exc)
-    sys_ff = shutil.which("ffmpeg")
-    if sys_ff and sys_ff not in cands:
-        cands.append(sys_ff)
     return cands
 
 
@@ -215,23 +223,47 @@ def _ffmpeg_candidates() -> list:
 # H.264 lewat filter ini supaya frame beresolusi ganjil tetap bisa diproses.
 PAD_FILTER = "pad=ceil(iw/2)*2:ceil(ih/2)*2"
 
-# Rantai filter yang dicoba berurutan, dari paling aman. libx264 butuh dimensi
-# genap DAN subsampling yuv420p; kalau salah satu build ffmpeg rewel soal
-# format, rantai pertama yang menormalkan keduanya lebih sering lolos.
+# Rantai filter yang dicoba berurutan. libx264 menolak dimensi ganjil
+# ("width not divisible by 2"), jadi chain pertama memaksa dimensi genap.
+# Subsampling yuv420p sendiri sudah dipasang lewat `-pix_fmt yuv420p` di
+# command line, jadi tidak perlu diulang di setiap chain.
+#
+# `scale=out_range=tv` menormalkan rentang warna ke limited/TV range. Tanpa ini
+# ffmpeg memilih yuvj420p (full-range) karena sumbernya JPG - format yang sudah
+# deprecated di ffmpeg 7 dan ditandai "pc" di ffprobe. Limited range adalah
+# bentuk standar untuk H.264. Chain kedua tetap ada kalau build tertentu tidak
+# punya filter `scale` yang mendukung out_range.
 FILTER_CHAINS = [
+    ("pad+range+format", f"{PAD_FILTER},format=yuv420p,scale=out_range=tv"),
     ("pad+format", f"{PAD_FILTER},format=yuv420p"),
-    ("pad", PAD_FILTER),
     ("none", None),
 ]
 
 # Encoder H.264 saja. mpeg4 SENGAJA tidak ada di daftar: VLC muter mpeg4
 # tapi Chrome/Firefox (<video>) tidak. Fallback mpeg4 = task "sukses" yang
 # tidak bisa diplay di web. Kalau semua H.264 gagal, task GAGAL dengan jelas.
+#
+# Percobaan 1 = H.264 "normal": preset veryfast + CRF 23 + profil High (default
+# libx264) + yuv420p. Ini kombinasi yang diterima Chrome, Firefox, Safari, Edge,
+# Android, iOS, dan VLC. Percobaan 2 hanya jaring kalau CRF ditolak build
+# tertentu. libopenh264 TIDAK dipakai: tidak ada di binary imageio-ffmpeg
+# maupun ffmpeg distro, jadi hanya memperpanjang pesan error.
 ENCODE_ATTEMPTS = [
     ("libx264", ["-preset", "veryfast", "-crf", "23"]),
     ("libx264", ["-preset", "veryfast", "-b:v", "4M"]),
-    ("libopenh264", ["-b:v", "4M"]),
 ]
+
+# Bukti codec di dalam file hasil encode. Chrome/Firefox hanya mau H.264 (avc1)
+# di dalam MP4; mpeg4 "sukses" di ffmpeg tapi mati di <video>. OpenCV melaporkan
+# fourcc yang berbeda-beda antar versi/platform ('h264', 'avc1', 'X264'), jadi
+# dicocokkan sebagai substring tanpa peduli huruf besar/kecil.
+_H264_TAGS = ("h264", "avc1", "x264", "264")
+
+
+def _is_h264(codec: str) -> bool:
+    c = (codec or "").lower()
+    return any(tag in c for tag in _H264_TAGS)
+
 
 # Hasil self-test encoder saat startup (dilihat di GET /health).
 _encode_selftest: dict = {"status": "pending"}
@@ -345,6 +377,7 @@ def _startup_encode_selftest() -> None:
                                     "error": "cv2.imwrite gagal"}
                 return
             results = {}
+            winner = None
             for exe in _ffmpeg_candidates():
                 ok, detail = _probe_ffmpeg(exe, probe, h264_only=True)
                 results[exe] = {"ok": ok, "detail": detail,
@@ -352,9 +385,18 @@ def _startup_encode_selftest() -> None:
                                 "version": _ffmpeg_version(exe)}
                 logger.info("Self-test encode H.264 %s: %s", exe,
                             detail if ok else f"GAGAL - {detail}")
+                if ok and winner is None:
+                    winner = exe
+            # Kunci binary yang sudah terbukti sehat, supaya task video pertama
+            # tidak membuang waktu di binary yang libx264-nya rusak.
+            if winner:
+                global _ffmpeg_exe_cache
+                _ffmpeg_exe_cache = winner
+                logger.info("ffmpeg dipakai: %s (lolos self-test H.264)", winner)
             _encode_selftest = {
-                "status": "ok" if any(v["ok"] for v in results.values()) else "failed",
-                "h264_available": any(v["ok"] for v in results.values()),
+                "status": "ok" if winner else "failed",
+                "h264_available": bool(winner),
+                "winner": winner,
                 "results": results,
             }
             if _encode_selftest["status"] == "failed":
@@ -407,7 +449,7 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
             "ffmpeg tidak ditemukan. Install: apt-get install -y ffmpeg "
             "atau pip install --force-reinstall imageio-ffmpeg")
 
-    h264_attempts = [a for a in ENCODE_ATTEMPTS if a[0].startswith("lib")]
+    h264_attempts = ENCODE_ATTEMPTS  # semuanya libx264 (lihat ENCODE_ATTEMPTS)
 
     problems = []
 
@@ -418,18 +460,29 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
         if vf:
             cmd += ["-vf", vf]
         cmd += ["-c:v", enc, "-pix_fmt", "yuv420p", "-r", f"{fps:.6f}",
+                # Tag range/ruang warna eksplisit. Sumber JPG itu full-range
+                # (yuvj420p), dan tanpa tag ini ffmpeg bisa menulis "unknown"
+                # sehingga pemutar menebak rentang warna. H.264 yang benar
+                # untuk web adalah limited/TV range + bt709.
+                "-color_range", "tv", "-colorspace", "bt709",
+                "-color_primaries", "bt709", "-color_trc", "bt709",
                 *enc_opts, "-movflags", "+faststart", str(dst)]
         logger.info("ffmpeg: %s", " ".join(cmd))
         ok, detail = _run_ffmpeg(cmd, timeout=900)
         if ok and dst.exists() and dst.stat().st_size > 0:
+            # Cek codec: ffmpeg bisa exit 0 tapi menulis codec lain. File non-H.264
+            # = "sukses" palsu (mati di <video>), jadi jangan diterima.
+            codec = _video_codec(dst)
+            if not _is_h264(codec):
+                detail = f"codec hasil '{codec}' bukan H.264"
+                logger.warning("encode ditolak enc=%s filter=%s: %s",
+                               enc, chain_name, detail)
+                problems.append(f"{exe} [enc={enc},filter={chain_name}] {detail}")
+                return False
             # cache hanya diisi setelah encode TERBUKTI berhasil
             _ffmpeg_exe_cache = exe
-            if enc != "libx264":
-                logger.warning(
-                    "Encode sukses tapi BUKAN libx264 (enc=%s, filter=%s).",
-                    enc, chain_name)
-            logger.info("Encode sukses: %s enc=%s filter=%s (%d frame, %d byte)",
-                        exe, enc, chain_name, n_frames, dst.stat().st_size)
+            logger.info("Encode sukses: %s enc=%s codec=%s filter=%s (%d frame, %d byte)",
+                        exe, enc, codec, chain_name, n_frames, dst.stat().st_size)
             return True
         logger.warning("encode gagal enc=%s filter=%s: %s", enc, chain_name, detail)
         problems.append(
@@ -447,53 +500,57 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
                 if _try(exe, enc, enc_opts, vf, chain_name):
                     return
 
-    # Tahap 2: jaring terakhir - tulis MPEG-4 (Part 2 / ASP) dan VERIFIKASI.
-    # H.264 dapat ditolak di server yang build/ffmpeg-nya rusak tanpa cara
-    # nyata untuk memperbaikinya saat itu juga. mpeg4 ada di SEMUA build
-    # ffmpeg dan di-decode OpenCV, jadi task tetap sukses. catatan: mpeg4
-    # tidak diputar Chrome <video>, tapi file tetap bisa diunduh & diputar
-    # VLC/QuickTime - lebih baik dari task gagal total.
-    for exe in candidates:
-        for chain_name, vf in (("pad+format", f"{PAD_FILTER},format=yuv420p"),
-                               ("none", None)):
-            cmd = [exe, "-y", "-loglevel", "error", "-hide_banner",
-                   "-framerate", f"{fps:.6f}", "-i", pattern]
-            if vf:
-                cmd += ["-vf", vf]
-            cmd += ["-c:v", "mpeg4", "-pix_fmt", "yuv420p", "-r", f"{fps:.6f}",
-                    "-q:v", "3", "-movflags", "+faststart", str(dst)]
-            logger.info("ffmpeg: %s", " ".join(cmd))
-            ok, detail = _run_ffmpeg(cmd, timeout=900)
-            if ok and dst.exists() and dst.stat().st_size > 0:
-                try:
-                    w, h = _verify_playable(dst)
-                except Exception as verr:
-                    logger.warning("mpeg4 hasil tak playable (%s), coba lagi", verr)
-                    continue
-                _ffmpeg_exe_cache = exe
-                logger.warning(
-                    "Encode sukses VIA MPEG4 fallback (bukan H.264): %s (%dx%d, %d frame)",
-                    exe, w, h, n_frames)
-                return
-            logger.warning("mpeg4 gagal enc=%s filter=%s: %s", "mpeg4", chain_name, detail)
-            problems.append(f"{exe} [enc=mpeg4,filter={chain_name}]: {detail}")
-
+    # Tidak ada Tahap 2. mpeg4 SENGAJA tidak pernah ditulis: file mpeg4 bisa
+    # "sukses" di ffmpeg dan tetap bisa dibuka OpenCV, tapi Chrome/Firefox
+    # <video> menolaknya (MEDIA_ERR_SRC_NOT_SUPPORTED). Itu menghasilkan task
+    # "completed" yang videonya mati di web — persis bug yang pernah terjadi.
+    # Kalau semua H.264 gagal, lebih baik task "failed" dengan pesan jelas.
     raise RuntimeError(
-        f"semua ffmpeg gagal encode (termasuk mpeg4) (fps={fps}, frames={n_frames}). "
+        f"semua ffmpeg gagal encode H.264 (fps={fps}, frames={n_frames}). "
         + " || ".join(problems)
         + " || Cek GET /health/ffmpeg lalu: apt-get update && "
           "apt-get install -y --reinstall ffmpeg, atau pip install imageio-ffmpeg")
 
 
+def _video_codec(path: Path) -> str:
+    """Nama codec video di dalam file (mis. 'h264', 'mpeg4', 'vp90').
+
+    Dipakai sebagai bukti nyata codec yang tertulis, karena `ffmpeg` bisa
+    exit 0 sementara OpenCV tetap bisa membuka file non-H.264. Mengembalikan
+    string kosong kalau tidak bisa dibaca.
+    """
+    cap = cv2.VideoCapture(str(path))
+    try:
+        if not cap.isOpened():
+            return ""
+        fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
+        return "".join(chr((fourcc >> (8 * i)) & 0xFF) for i in range(4)).strip("\x00")
+    finally:
+        cap.release()
+
+
 def _verify_playable(path: Path) -> tuple[int, int]:
-    """Buka file hasil seperti browser/player. Return (w, h). Raise kalau tidak playable."""
+    """Buka file hasil seperti browser/player. Return (w, h). Raise kalau tidak playable.
+
+    Dua syarat, keduanya wajib:
+    1. Bisa dibuka & dibaca sebagai video (file tidak corrupt/0-byte).
+    2. Codec-nya H.264. Syarat kedua ini yang dulu hilang: `mpeg4` lolos
+       syarat (1) karena OpenCV bisa decode mpeg4, padahal Chrome/Firefox
+       <video> menolaknya. Itu sebabnya video "completed" tapi tidak bisa
+       diputar di web.
+    """
     if not path.exists() or path.stat().st_size == 0:
         raise RuntimeError(f"video output kosong: {path}")
+    codec = _video_codec(path)
+    if not _is_h264(codec):
+        raise RuntimeError(
+            f"video bukan H.264 (codec terbaca: '{codec or 'tidak terbaca'}') "
+            f"-> tidak bisa diputar Chrome/Firefox: {path.name}")
     cap = cv2.VideoCapture(str(path))
     ok, frame = cap.read()
     cap.release()
     if not ok or frame is None:
-        raise RuntimeError(f"video tidak bisa di-decode (codec tidak playable): {path.name}")
+        raise RuntimeError(f"video tidak bisa di-decode: {path.name}")
     return frame.shape[1], frame.shape[0]
 
 def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int) -> dict:
@@ -708,6 +765,7 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
         # Prepare result
         processing_time_ms = int((time.time() - start_time) * 1000)
         video_url = f"/uploads/videos/{output_video_path.name}"
+        video_codec = _video_codec(output_video_path)
         n = max(1, len(frame_pcts))
         class_keys = sorted({k for p in frame_pcts for k in p})
         avg_pct = {k: sum(p.get(k, 0.0) for p in frame_pcts) / n for k in class_keys}
@@ -719,6 +777,8 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
             "filename": video_path.name,
             "video_url": video_url,
             "video_overlay_url": video_url,
+            "video_codec": video_codec,
+            "video_playable_in_browser": _is_h264(video_codec),
             "total_frames": len(output_frames),
             "frames_processed": len(output_frames),
             "video_info": video_tasks[task_id]["video_info"],

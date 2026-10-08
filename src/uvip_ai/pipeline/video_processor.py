@@ -109,9 +109,17 @@ class VideoProcessor:
         frame_paths: list[Path],
         output_path: str,
         fps: float = 30.0,
-        codec: str = "mp4v"
+        codec: str = "avc1"
     ) -> Path:
-        """Combine frames jadi video."""
+        """Combine frames jadi video lewat OpenCV VideoWriter.
+
+        PERINGATAN: default-nya H.264 (avc1), BUKAN mp4v. mp4v menghasilkan
+        MPEG-4 Part 2 yang bisa dibuka OpenCV tapi DITOLAK Chrome/Firefox
+        <video> (MEDIA_ERR_SRC_NOT_SUPPORTED) — itu penyebab video "sukses"
+        tapi tidak bisa diputar di web. Untuk jalur produksi API video,
+        pakai `_encode_h264_frames` (ffmpeg) yang juga memverifikasi codec;
+        helper ini hanya untuk pemakaian lokal/eksperimen.
+        """
         if not frame_paths:
             raise ValueError("No frames to combine")
 
@@ -134,6 +142,13 @@ class VideoProcessor:
                     out.write(frame)
         finally:
             out.release()
+
+        # VideoWriter gagal menulis TANPA exception (file 0-byte) kalau encoder
+        # codec tidak tersedia di OpenCV build ini. Jangan diamkan.
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError(
+                f"VideoWriter gagal menulis {output_path.name} (codec={codec}). "
+                "Pakai jalur ffmpeg H.264 (`_encode_h264_frames` di API).")
 
         logger.info(f"Created video: {output_path} ({len(frame_paths)} frames @ {fps} fps)")
         return output_path
