@@ -120,7 +120,7 @@ async def serve_upload(rel_path: str):
 
 
 # Build stamp - bukti versi kode yang benar-benar jalan (lihat GET /health)
-BUILD_STAMP = "jpg-h264-v16-stream-adaptive-threads"
+BUILD_STAMP = "jpg-h264-v17-gpu-device-fix"
 
 # Binary ffmpeg yang sudah terbukti bisa encode (diisi oleh _encode_h264_frames)
 _ffmpeg_exe_cache: Optional[str] = None
@@ -236,6 +236,17 @@ def _host_info() -> dict:
         info["fp16"] = settings.uvip_use_fp16
     except Exception as exc:
         info["device_error"] = str(exc)
+    # Device yang BENAR-BENAR dipakai model. settings.resolve_device() hanya
+    # bilang "cuda tersedia", padahal model bisa turun ke CPU (probe kernel
+    # gagal, dsb). Tanpa ini, /health bisa melaporkan "cuda" sementara inferensi
+    # jalan di CPU -> diagnosis jadi salah arah.
+    if _seg_model_cache is not None:
+        info["model_device"] = getattr(_seg_model_cache, "_device", "unknown")
+        _dt = getattr(_seg_model_cache, "_dtype", None)
+        if _dt is not None:
+            info["model_dtype"] = str(_dt).replace("torch.", "")
+    else:
+        info["model_device"] = "not_loaded_yet"
     try:
         import torch
         if torch.cuda.is_available():

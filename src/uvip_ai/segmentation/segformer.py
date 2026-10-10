@@ -100,27 +100,39 @@ class SegformerB5:
         # kartu ini" (mis. wheel CPU-only, atau GPU lebih baru dari build
         # torch) dan turun ke CPU dengan pesan jelas, bukan crash.
         resolved = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        cuda_probe_error = None
         if resolved == "cuda":
+            # Hanya panggilan CUDA yang ada di dalam try ini. Kalau kode lain
+            # (mis. typo atribut) ikut masuk, errornya akan tertangkap dan
+            # menyamar sebagai "GPU rusak" -> turun ke CPU tanpa sebab jelas.
             try:
                 # Probe CUDA with tiny tensor to catch "no kernel image" errors early
                 _probe = torch.zeros((1,), device="cuda")
                 _probe.cpu()  # force sync
                 del _probe
                 torch.cuda.synchronize()
-                _gpu = torch.cuda.get_device_name(0)
-                _cap = torch.cuda.get_device_capability(0)
-                print(f"[SegFormer] GPU terdeteksi: {_gpu} (sm_{_cap[0]}{_cap[1]}). "
-                      f"Pakai CUDA, dtype={self._dtype}.")
             except Exception as cuda_err:
-                print(f"[SegFormer] GPU ada tapi tidak bisa dipakai ({cuda_err}). "
-                      f"Jalan di CPU (lebih lambat). Cek build torch (+cuXXX) "
-                      f"cocok dengan driver/sm_XX kartu ini.")
+                cuda_probe_error = cuda_err
                 resolved = "cpu"
+        # dtype ditetapkan SETELAH device final, supaya log di bawah selalu
+        # membaca nilai yang sudah ada (dulu dibaca sebelum di-assign ->
+        # AttributeError -> tertangkap sebagai "GPU tidak bisa dipakai").
+        self._device = resolved
+        self._dtype = (torch.float16 if (self._device == "cuda" and low_vram_mode)
+                       else torch.float32)
+        if self._device == "cuda":
+            _gpu = torch.cuda.get_device_name(0)
+            _cap = torch.cuda.get_device_capability(0)
+            print(f"[SegFormer] GPU terdeteksi: {_gpu} (sm_{_cap[0]}{_cap[1]}). "
+                  f"Pakai CUDA, dtype={self._dtype}.")
+        elif cuda_probe_error is not None:
+            print(f"[SegFormer] GPU ada tapi tidak bisa dipakai "
+                  f"({type(cuda_probe_error).__name__}: {cuda_probe_error}). "
+                  f"Jalan di CPU (lebih lambat). Cek build torch (+cuXXX) cocok "
+                  f"dengan driver/sm_XX kartu ini.")
         else:
             print("[SegFormer] Tidak ada GPU NVIDIA/CUDA -> jalan di CPU "
                   "(lebih lambat). Untuk GPU: install torch +cuXXX lalu restart.")
-        self._device = resolved
-        self._dtype = torch.float16 if (self._device == "cuda" and low_vram_mode) else torch.float32
     def _load(self) -> None:
         if self._model is not None:
             return
