@@ -11,6 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import logging
 import json
+import os
 import shutil
 import time
 import threading
@@ -119,7 +120,7 @@ async def serve_upload(rel_path: str):
 
 
 # Build stamp - bukti versi kode yang benar-benar jalan (lihat GET /health)
-BUILD_STAMP = "jpg-h264-v15-libx264-limited-range"
+BUILD_STAMP = "jpg-h264-v16-stream-adaptive-threads"
 
 # Binary ffmpeg yang sudah terbukti bisa encode (diisi oleh _encode_h264_frames)
 _ffmpeg_exe_cache: Optional[str] = None
@@ -129,7 +130,8 @@ async def health():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat(),
             "build": BUILD_STAMP, "encode_path": "jpg_frames->libx264",
             "ffmpeg_in_use": _ffmpeg_exe_cache,
-            "encode_selftest": _encode_selftest.get("status")}
+            "encode_selftest": _encode_selftest.get("status"),
+            **_host_info()}
 
 
 @app.get("/health/ffmpeg")
@@ -217,6 +219,91 @@ def _ffmpeg_candidates() -> list:
     except Exception as exc:  # ImportError / RuntimeError / dll.
         logger.warning("imageio-ffmpeg tidak tersedia: %s", exc)
     return cands
+
+
+def _host_info() -> dict:
+    """Ringkasan device & resource host - untuk memastikan GPU benar terpakai.
+
+    Device di-resolve saat model di-load (bukan saat import), jadi di sini
+    dilaporkan dari settings + status cache model. Berguna untuk membedakan
+    "GPU tidak terbaca" dari "kode jalan di CPU".
+    """
+    info: dict = {}
+    try:
+        from uvip_ai.config import settings
+        info["device_setting"] = settings.uvip_device
+        info["device_resolved"] = settings.resolve_device()
+        info["fp16"] = settings.uvip_use_fp16
+    except Exception as exc:
+        info["device_error"] = str(exc)
+    try:
+        import torch
+        if torch.cuda.is_available():
+            info["gpu"] = torch.cuda.get_device_name(0)
+            cap = torch.cuda.get_device_capability(0)
+            info["gpu_capability"] = f"sm_{cap[0]}{cap[1]}"
+            info["vram_total_gb"] = round(
+                torch.cuda.get_device_properties(0).total_memory / 1024**3, 1)
+        else:
+            info["gpu"] = None
+            info["gpu_note"] = (
+                "torch.cuda.is_available()=False -> jalan di CPU. Cek: "
+                "nvidia-smi, driver NVIDIA, dan build torch (+cuXXX).")
+    except Exception as exc:
+        info["gpu_error"] = str(exc)
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        info["cpu_count"] = os.cpu_count()
+        info["ram_total_gb"] = round(vm.total / 1024**3, 1)
+        info["ram_available_gb"] = round(vm.available / 1024**3, 1)
+        info["disk_free_gb"] = round(shutil.disk_usage(str(uploads_dir)).free / 1024**3, 1)
+        info["encoder_threads"] = _resolve_encoder_threads()
+    except Exception as exc:
+        info["host_error"] = str(exc)
+    # Batas thread proses. EAGAIN saat ffmpeg membuat thread hampir selalu
+    # berasal dari sini (atau RAM habis), bukan dari ffmpeg-nya sendiri.
+    try:
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)
+        info["nproc_limit"] = [soft if soft != resource.RLIM_INFINITY else "inf",
+                               hard if hard != resource.RLIM_INFINITY else "inf"]
+    except Exception:
+        pass
+    for cg in ("/sys/fs/cgroup/pids.max",
+               "/sys/fs/cgroup/pids/pids.max"):
+        try:
+            if Path(cg).exists():
+                info["cgroup_pids_max"] = Path(cg).read_text().strip()
+                break
+        except Exception:
+            pass
+    try:
+        info["threads_now"] = len(os.listdir("/proc/self/task"))
+    except Exception:
+        pass
+    return info
+
+
+def _resolve_encoder_threads() -> int:
+    """Jumlah thread libx264/filter berdasarkan CPU & RAM yang tersedia.
+
+    Server kecil (mis. Vast.ai Xeon E5-2620 v3 + RAM ~9GB) gagal dengan
+    "[Parsed_scale_2] Failed to configure output pad ... Resource temporarily
+    unavailable" + "Error while opening encoder". Itu EAGAIN: proses tidak bisa
+    membuat thread lagi karena RAM/thread-limit. libx264 membuat ~1.5 thread per
+    core, dan tiap thread butuh stack + frame buffer. Jadi jumlah thread
+    dibatasi oleh RAM tersedia (~40MB per thread), bukan hanya jumlah core.
+    """
+    import os
+    cores = os.cpu_count() or 2
+    try:
+        import psutil
+        avail_mb = psutil.virtual_memory().available / 1024**2
+        mem_cap = max(1, int(avail_mb // 40))
+    except Exception:
+        mem_cap = 2  # konservatif kalau psutil tidak ada
+    return max(1, min(4, cores, mem_cap))
 
 
 # libx264 menolak dimensi ganjil ("width not divisible by 2"). Semua encode
@@ -339,14 +426,19 @@ def _probe_ffmpeg(exe: str, sample_frame: Path, fps: float = 25.0,
     """
     import tempfile
     last = ""
+    # Probe pakai batas thread yang sama dengan encode asli, supaya
+    # /health/ffmpeg melaporkan hasil yang benar-benar akan terjadi.
+    _nth = _resolve_encoder_threads()
     attempts = [a for a in ENCODE_ATTEMPTS
                 if a[0].startswith("lib")] if h264_only else ENCODE_ATTEMPTS
     with tempfile.TemporaryDirectory() as td:
         for chain_name, vf in FILTER_CHAINS:
             for enc, enc_opts in attempts:
                 out = Path(td) / "probe.mp4"
-                cmd = [exe, "-y", "-loglevel", "error", "-hide_banner",
-                       "-framerate", f"{fps}", "-i", str(sample_frame)]
+                cmd = [exe, "-y", "-loglevel", "error", "-hide_banner"]
+                if _nth > 0:
+                    cmd += ["-threads", str(_nth), "-filter_threads", "1"]
+                cmd += ["-framerate", f"{fps}", "-i", str(sample_frame)]
                 if vf:
                     cmd += ["-vf", vf]
                 cmd += ["-frames:v", "1", "-c:v", enc, "-pix_fmt", "yuv420p",
@@ -453,10 +545,15 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
 
     problems = []
 
-    def _try(exe: str, enc: str, enc_opts: list, vf, chain_name: str) -> bool:
+    def _try(exe: str, enc: str, enc_opts: list, vf, chain_name: str,
+             nthreads: int = 0) -> bool:
         global _ffmpeg_exe_cache
-        cmd = [exe, "-y", "-loglevel", "error", "-hide_banner",
-               "-framerate", f"{fps:.6f}", "-i", pattern]
+        cmd = [exe, "-y", "-loglevel", "error", "-hide_banner"]
+        # Batasi thread ffmpeg & libx264. Tanpa ini, server RAM kecil kena
+        # EAGAIN ("Resource temporarily unavailable") saat membuat thread.
+        if nthreads > 0:
+            cmd += ["-threads", str(nthreads), "-filter_threads", "1"]
+        cmd += ["-framerate", f"{fps:.6f}", "-i", pattern]
         if vf:
             cmd += ["-vf", vf]
         cmd += ["-c:v", enc, "-pix_fmt", "yuv420p", "-r", f"{fps:.6f}",
@@ -490,15 +587,23 @@ def _encode_h264_frames(frames_dir: Path, fps: float, dst: Path) -> None:
             f"[{_ffmpeg_version(exe)}]: {detail}")
         return False
 
-    # Tahap 1: H.264 di semua binary dulu.
-    for exe in candidates:
-        ok, detail = _probe_ffmpeg(exe, frames[0], fps)
-        logger.info("Probe %s [%s]: %s", exe, _ffmpeg_version(exe),
-                    detail if ok else f"GAGAL - {detail}")
-        for chain_name, vf in FILTER_CHAINS:
-            for enc, enc_opts in h264_attempts:
-                if _try(exe, enc, enc_opts, vf, chain_name):
-                    return
+    # Sesi 1 = default (semua core). Sesi 2 = thread dibatasi: penyelamat untuk
+    # server RAM kecil yang gagal EAGAIN saat ffmpeg/libx264 membuat thread.
+    passes = [(0, "default")]
+    limited = _resolve_encoder_threads()
+    if limited > 0:
+        passes.append((limited, f"threads={limited}"))
+    for nthreads, pass_name in passes:
+        logger.info("Encode pass: %s", pass_name)
+        # Tahap 1: H.264 di semua binary dulu.
+        for exe in candidates:
+            ok, detail = _probe_ffmpeg(exe, frames[0], fps)
+            logger.info("Probe %s [%s]: %s", exe, _ffmpeg_version(exe),
+                        detail if ok else f"GAGAL - {detail}")
+            for chain_name, vf in FILTER_CHAINS:
+                for enc, enc_opts in h264_attempts:
+                    if _try(exe, enc, enc_opts, vf, chain_name, nthreads):
+                        return
 
     # Tidak ada Tahap 2. mpeg4 SENGAJA tidak pernah ditulis: file mpeg4 bisa
     # "sukses" di ffmpeg dan tetap bisa dibuka OpenCV, tapi Chrome/Firefox
@@ -707,9 +812,23 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
                 "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
             }
         
+        # Frame TIDAK ditahan di RAM. Server kecil (RAM ~9GB) OOM/EAGAIN kalau
+        # 408 frame 1080p disimpan sekaligus (~2.5GB per salinan, x2 dengan
+        # overlay). Tulis tiap overlay JPG ke disk tepat setelah dibuat.
+        frames_dir = processor.output_dir / f"frames_{task_id}"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        frame_size = None
+
+        # Cek ruang disk SEBELUM mulai: server Vast.ai bisa cuma sisa ~2GB.
+        est_bytes = max(1, total_frames) * 400 * 1024  # ~400KB/frame JPG 1080p
+        free = shutil.disk_usage(str(frames_dir)).free
+        if free < est_bytes + 200 * 1024 * 1024:
+            raise RuntimeError(
+                f"disk hampir penuh: sisa {free/1024**2:.0f}MB, perkiraan butuh "
+                f"{est_bytes/1024**2:.0f}MB + 200MB. Kosongkan disk server dulu.")
+
         # Process frames
         frame_idx = 0
-        output_frames = []
         frame_pcts = []
         start_time = time.time()
         while True:
@@ -721,11 +840,15 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
             seg_map = result["seg_map"]
             frame_pcts.append(result.get("pct_by_class", {}))
             overlay = processor.create_overlay(frame, seg_map, alpha=overlay_alpha)
-            output_frames.append(overlay)
-            
+            if not cv2.imwrite(str(frames_dir / f"f_{frame_idx:06d}.jpg"), overlay,
+                               [cv2.IMWRITE_JPEG_QUALITY, 92]):
+                raise RuntimeError(f"gagal tulis frame {frame_idx} ke {frames_dir}")
+            if frame_size is None:
+                frame_size = overlay.shape[:2]
+
             # Update progress
             with video_tasks_lock:
-                video_tasks[task_id]["frames_processed"] = len(output_frames)
+                video_tasks[task_id]["frames_processed"] = frame_idx + 1
 
             if frame_idx % 10 == 0:
                 logger.info("Task %s: frame %d/%s", task_id, frame_idx, total_frames)
@@ -733,25 +856,21 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
                     video_tasks[task_id]["phase"] = f"processing_{frame_idx}_{total_frames}"
 
             frame_idx += 1
-        
+
         cap.release()
-        
+        n_frames_processed = frame_idx
+
         # Combine frames to video
         with video_tasks_lock:
             video_tasks[task_id]["phase"] = "combining_frames"
-        
-        if not output_frames:
+
+        if n_frames_processed == 0:
             raise ValueError("No frames processed")
         output_video_path = processor.output_dir / f"video_{task_id}.mp4"
         # VideoWriter+mp4v unreliable di server (file 0-byte/raw corrupt -> ffmpeg
-        # "received no packets"). Tulis frame ke disk, encode JPG->H264 langsung.
-        frames_dir = processor.output_dir / f"frames_{task_id}"
-        frames_dir.mkdir(parents=True, exist_ok=True)
+        # "received no packets"). Frame sudah ditulis ke disk sebagai JPG ->
+        # encode JPG->H264 langsung (streaming, tanpa menahan frame di RAM).
         try:
-            for i, frame in enumerate(output_frames):
-                if not cv2.imwrite(str(frames_dir / f"f_{i:06d}.jpg"), frame,
-                                   [cv2.IMWRITE_JPEG_QUALITY, 92]):
-                    raise RuntimeError(f"gagal tulis frame {i}")
             _encode_h264_frames(frames_dir, target_fps, output_video_path)
             vw, vh = _verify_playable(output_video_path)
             logger.info("Video %s playable: %dx%d", output_video_path.name, vw, vh)
@@ -761,7 +880,7 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
             raise
         else:
             shutil.rmtree(frames_dir, ignore_errors=True)
-        
+
         # Prepare result
         processing_time_ms = int((time.time() - start_time) * 1000)
         video_url = f"/uploads/videos/{output_video_path.name}"
@@ -769,7 +888,7 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
         n = max(1, len(frame_pcts))
         class_keys = sorted({k for p in frame_pcts for k in p})
         avg_pct = {k: sum(p.get(k, 0.0) for p in frame_pcts) / n for k in class_keys}
-        h, w = output_frames[0].shape[:2]
+        h, w = frame_size if frame_size else (0, 0)
         unified = build_unified_metrics(avg_pct, (h, w), processing_time_ms)
         result_response = {
             "status": "completed",
@@ -779,8 +898,8 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
             "video_overlay_url": video_url,
             "video_codec": video_codec,
             "video_playable_in_browser": _is_h264(video_codec),
-            "total_frames": len(output_frames),
-            "frames_processed": len(output_frames),
+            "total_frames": n_frames_processed,
+            "frames_processed": n_frames_processed,
             "video_info": video_tasks[task_id]["video_info"],
             "created_at": video_tasks[task_id]["created_at"],
             "processing_time_ms": processing_time_ms,
@@ -797,8 +916,8 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
             video_tasks[task_id]["result"] = result_response
             video_tasks[task_id]["finished_at"] = time.time()
         
-        logger.info("✅ Video task %s completed: %s frames in %dms", 
-                    task_id, len(output_frames), processing_time_ms)
+        logger.info("✅ Video task %s completed: %s frames in %dms",
+                    task_id, n_frames_processed, processing_time_ms)
         
         # Post to backend if photo_id provided (sync worker: jalankan coroutine via asyncio.run)
         if photo_id:

@@ -29,6 +29,7 @@ uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9     # multipart form untuk upload foto
 pydantic-settings>=2.4.0
 httpx>=0.27.0               # client untuk seed data ke backend
+psutil>=5.9.0               # batas thread ffmpeg sesuai RAM (anti-EAGAIN di server kecil)
 
 # --- Utilitas dataset (ekstrak foto dari PDF) ---
 pypdf>=4.3.0

@@ -128,9 +128,30 @@ bash scripts/install_torch.sh
 # Install dependencies
 pip install -r requirements.txt
 
+# Install paket ini (editable) supaya `import uvip_ai` jalan
+pip install -e .
+
 # Verify GPU
 python scripts/verify_gpu.py
 ```
+
+### 1b. Jalankan API (lokal)
+
+```bash
+# Windows
+.venv\Scripts\python.exe run_dev.py
+
+# Linux/Mac
+.venv/bin/python run_dev.py
+
+# opsi: --host 0.0.0.0 --port 8010 --reload
+```
+
+Buka `http://127.0.0.1:8001/docs` (uji interaktif) atau cek `curl http://127.0.0.1:8001/health`.
+
+> Alternatif tanpa `pip install -e .`: set `PYTHONPATH` ke folder `src`
+> (`set PYTHONPATH=%CD%\src` di cmd, `$env:PYTHONPATH="$PWD\src"` di PowerShell),
+> lalu `.venv\Scripts\python.exe -m uvicorn uvip_ai.api.main:app --port 8001`.
 
 ### 2. Extract Photos from PDF
 

@@ -93,7 +93,12 @@ class SegformerB5:
         self.low_vram_mode = low_vram_mode
         self._model = None
         self._processor = None
-        # Determine device with CUDA kernel compatibility check (GTX 1070 Pascal sm_61 fix)
+        # Device TIDAK spesifik merek: cuma butuh torch.cuda.is_available().
+        # GTX 10-series (Pascal, sm_61), RTX 20/30/40 (Turing/Ampere/Ada),
+        # Tesla, dsb. semuanya masuk lewat jalur yang sama. Probe kernel di
+        # bawah menangkap kasus "build torch tidak punya kernel untuk sm_XX
+        # kartu ini" (mis. wheel CPU-only, atau GPU lebih baru dari build
+        # torch) dan turun ke CPU dengan pesan jelas, bukan crash.
         resolved = device or ("cuda" if torch.cuda.is_available() else "cpu")
         if resolved == "cuda":
             try:
@@ -102,9 +107,18 @@ class SegformerB5:
                 _probe.cpu()  # force sync
                 del _probe
                 torch.cuda.synchronize()
+                _gpu = torch.cuda.get_device_name(0)
+                _cap = torch.cuda.get_device_capability(0)
+                print(f"[SegFormer] GPU terdeteksi: {_gpu} (sm_{_cap[0]}{_cap[1]}). "
+                      f"Pakai CUDA, dtype={self._dtype}.")
             except Exception as cuda_err:
-                print(f"[SegFormer] CUDA kernel probe failed ({cuda_err}). Falling back to CPU.")
+                print(f"[SegFormer] GPU ada tapi tidak bisa dipakai ({cuda_err}). "
+                      f"Jalan di CPU (lebih lambat). Cek build torch (+cuXXX) "
+                      f"cocok dengan driver/sm_XX kartu ini.")
                 resolved = "cpu"
+        else:
+            print("[SegFormer] Tidak ada GPU NVIDIA/CUDA -> jalan di CPU "
+                  "(lebih lambat). Untuk GPU: install torch +cuXXX lalu restart.")
         self._device = resolved
         self._dtype = torch.float16 if (self._device == "cuda" and low_vram_mode) else torch.float32
     def _load(self) -> None:
