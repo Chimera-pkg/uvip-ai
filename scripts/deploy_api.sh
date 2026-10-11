@@ -177,6 +177,31 @@ else
     exit 1
 fi
 
+# --- cek gateway /llm/* (NON-fatal) -------------------------------------
+# /llm/* menempel di app yang sama, jadi kalau route-nya hilang (mis. import
+# router gagal) API tetap "sehat" tapi fitur LLM mati tanpa suara. Diverifikasi
+# di sini; TIDAK memblokir deploy karena key upstream bisa belum di-set.
+echo "==> Cek gateway /llm"
+LLMJSON="$(curl -s --max-time 30 "http://localhost:$PORT/llm/health" || true)"
+if [ -z "$LLMJSON" ]; then
+    echo "!! /llm/health tidak merespons (router /llm tidak ter-mount?)"
+else
+    echo "$LLMJSON" | "$PYTHON" -m json.tool 2>/dev/null || echo "$LLMJSON"
+    if echo "$LLMJSON" | "$PYTHON" -c '
+import json, sys
+d = json.load(sys.stdin)
+if not d.get("key_configured"):
+    print("!! NINE_ROUTER_KEY belum di-set: /llm/ask akan balas 500.")
+    print("!! Set di .env (gitignored) atau environment service, lalu restart.")
+    sys.exit(1)
+sys.exit(0)
+'; then
+        echo "OK: gateway /llm aktif + key terkonfigurasi"
+    else
+        echo "!! Gateway /llm ter-mount tapi belum ada API key (tidak memblokir deploy)."
+    fi
+fi
+
 if [ "$SYSTEMD" = "1" ]; then
     echo "==> Selesai. Log: journalctl -u uvip -f"
 else
