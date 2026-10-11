@@ -51,10 +51,21 @@ curl http://localhost:8000/health
 # View API docs
 open http://localhost:8000/docs
 
+# LLM gateway (9router) — ikut ter-mount di app yang sama, prefix /llm
+curl "http://localhost:8000/llm/health"
+curl "http://localhost:8000/llm/ask?q=halo"
+# Halaman uji (bisa di-embed via iframe): http://localhost:8000/llm/
+
 # Test prediction (from another terminal)
 curl -X POST "http://localhost:8000/predict" \
     -F "file=@data/extracted/photos/KAYUTANGAN/KAYUTANGAN_ST-01.jpg"
 ```
+
+> **LLM gateway butuh API key.** Set `NINE_ROUTER_KEY` di `.env` (gitignored)
+> atau environment service, lalu restart. Tanpa key, `/llm/health` tetap 200
+> tapi `key_configured: false` dan `/llm/ask` akan gagal (upstream balas 401).
+> Upstream membatasi **5 request/menit** per key — router meneruskan batas itu
+> sebagai HTTP 503 berisi pesan aslinya.
 
 ### Step 5: Monitor Logs
 ```bash
