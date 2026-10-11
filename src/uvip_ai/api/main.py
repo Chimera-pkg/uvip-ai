@@ -81,6 +81,17 @@ def _cleanup_old_tasks():
 
 app = fastapi.FastAPI(title="UVIP-AI API", version="0.1.0")
 
+# LLM gateway (9router). Dulu proses Bun terpisah (llm/server.mjs, port 8787);
+# sekarang menempel di API utama supaya ikut tampil di /docs. Prefix /llm.
+from uvip_ai.llm import router as llm_router  # noqa: E402
+from uvip_ai.llm.cors import LLMCorsMiddleware  # noqa: E402
+
+app.include_router(llm_router)
+
+# CORS hanya untuk /llm/* (meniru shim Bun lama). Sengaja TIDAK global supaya
+# endpoint upload/proses video tidak ikut bisa dipanggil lintas-origin.
+app.add_middleware(LLMCorsMiddleware, prefix="/llm")
+
 # Serve static files dari uploads/ — ABSOLUTE ke repo root.
 # Dulu relatif (Path("uploads")) sehingga restart dari cwd berbeda bikin file
 # "hilang" (tertulis di folder lain, diserve dari folder lain). Sekarang satu lokasi pasti.

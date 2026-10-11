@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     # Performance
     latency_target_ms: int = 700
 
+    # LLM gateway (9router) - dipakai oleh router /llm/* (lihat uvip_ai/llm/router.py).
+    # Upstream ini OpenAI-compatible tapi HANYA menerima POST; router /llm/*
+    # menambah varian GET supaya prompt bisa dipanggil dari browser/<iframe>/curl.
+    nine_router_url: str = "https://9router-production-fc96.up.railway.app/v1"
+    nine_router_key: str = ""
+    nine_router_model: str = "de/92r-cbai/deepseek-v4.1-flash"
+    nine_router_fallbacks: str = "gcli/grok-4.6"  # dipisah koma
+    nine_router_timeout_s: int = 120
+
     def resolve_device(self) -> str:
         """Kembalikan 'cuda' atau 'cpu' berdasarkan setting & ketersediaan."""
         if self.uvip_device == "cpu":
