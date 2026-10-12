@@ -34,7 +34,9 @@
 GET  /llm/chat/completions?q=...           -&gt; JSON OpenAI-shape + context
 GET  /llm/models                           -&gt; daftar model upstream
 GET  /llm/health                           -&gt; status upstream
-POST /llm/chat/completions                 -&gt; passthrough (stream jalan)</pre>
+POST /llm/chat                             -&gt; chat multi-turn (body JSON) -&gt; JSON
+POST /llm/chat/completions                 -&gt; passthrough (stream jalan)
+POST /llm/vision                           -&gt; analisa gambar (multipart) -&gt; JSON</pre>
 
   <h2>Uji langsung</h2>
   <div class="row">
@@ -51,6 +53,27 @@ POST /llm/chat/completions                 -&gt; passthrough (stream jalan)</pre
 
   <label>&lt;iframe src="/llm/ask?q=..."&gt; — embed langsung tanpa JS</label>
   <iframe id="frame" src="about:blank"></iframe>
+
+  <h2>Uji vision (POST /llm/vision)</h2>
+  <div class="row">
+    <input type="file" id="vfile" accept="image/*">
+    <input id="vprompt" value="Jelaskan isi gambar ini secara singkat." placeholder="prompt...">
+    <button id="vgo">Analisa</button>
+  </div>
+  <label>fetch() multipart -&gt; JSON dari POST /llm/vision</label>
+  <pre id="vout">—</pre>
+
+  <h2>Uji chat (POST /llm/chat)</h2>
+  <div class="row">
+    <input id="cprompt" value="Jelaskan apa itu H.264 dengan singkat." placeholder="pertanyaan...">
+    <select id="cmodel">
+      <option value="de/92r-cbai/deepseek-v4.1-flash">de/92r-cbai/deepseek-v4.1-flash</option>
+      <option value="gcli/grok-4.6">gcli/grok-4.6</option>
+    </select>
+    <button id="cgo">Kirim</button>
+  </div>
+  <label>fetch() JSON body -&gt; JSON dari POST /llm/chat (riwayat disimpan, jadi multi-turn)</label>
+  <pre id="cout">—</pre>
 
 <script>
 const q = document.getElementById('q');
@@ -77,6 +100,68 @@ async function kirim() {
 
 go.addEventListener('click', kirim);
 kirim();
+
+// --- Uji /llm/vision -------------------------------------------------------
+const vfile = document.getElementById('vfile');
+const vprompt = document.getElementById('vprompt');
+const vout = document.getElementById('vout');
+const vgo = document.getElementById('vgo');
+
+async function analisa() {
+  if (!vfile.files.length) { vout.textContent = 'Pilih gambar dulu.'; return; }
+  vgo.disabled = true; vout.textContent = '...';
+  const fd = new FormData();
+  fd.append('file', vfile.files[0]);
+  fd.append('prompt', vprompt.value);
+  try {
+    const res = await fetch('/llm/vision', { method: 'POST', body: fd });
+    const data = await res.json();
+    vout.textContent = res.ok
+      ? (data.answer || JSON.stringify(data, null, 2))
+      : `[HTTP ${res.status}] ` + JSON.stringify(data, null, 2);
+  } catch (e) {
+    vout.textContent = '[ERROR] ' + e.message;
+  } finally {
+    vgo.disabled = false;
+  }
+}
+
+vgo.addEventListener('click', analisa);
+
+// --- Uji /llm/chat ---------------------------------------------------------
+const cprompt = document.getElementById('cprompt');
+const cmodel = document.getElementById('cmodel');
+const cout = document.getElementById('cout');
+const cgo = document.getElementById('cgo');
+let riwayat = []; // disimpan antar klik -> membuktikan multi-turn
+
+async function chat() {
+  const teks = cprompt.value.trim();
+  if (!teks) return;
+  cgo.disabled = true; cout.textContent = '...';
+  riwayat.push({ role: 'user', content: teks });
+  try {
+    const res = await fetch('/llm/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: riwayat, model: cmodel.value }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      riwayat.push({ role: 'assistant', content: data.answer || '' });
+      cout.textContent = data.answer + '\n\n---\n' + JSON.stringify(data.context, null, 2);
+    } else {
+      cout.textContent = `[HTTP ${res.status}] ` + JSON.stringify(data, null, 2);
+    }
+  } catch (e) {
+    cout.textContent = '[ERROR] ' + e.message;
+  } finally {
+    cgo.disabled = false;
+  }
+}
+
+cgo.addEventListener('click', chat);
+cprompt.addEventListener('keydown', (e) => { if (e.key === 'Enter') chat(); });
 </script>
 </body>
 </html>

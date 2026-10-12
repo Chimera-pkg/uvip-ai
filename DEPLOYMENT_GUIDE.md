@@ -54,6 +54,14 @@ open http://localhost:8000/docs
 # LLM gateway (9router) — ikut ter-mount di app yang sama, prefix /llm
 curl "http://localhost:8000/llm/health"
 curl "http://localhost:8000/llm/ask?q=halo"
+# Chat multi-turn (body JSON) — enak dites juga dari /docs
+curl -X POST "http://localhost:8000/llm/chat" \
+    -H "Content-Type: application/json" \
+    -d '{"messages":[{"role":"user","content":"Sebutkan 3 nama warung kopi."}]}'
+# Analisa gambar (butuh model vision-capable; default NINE_ROUTER_VISION_MODEL)
+curl -X POST "http://localhost:8000/llm/vision" \
+    -F "file=@data/extracted/photos/KAYUTANGAN/KAYUTANGAN_BS-01.jpg" \
+    -F "prompt=Jelaskan kondisi jalan pada gambar ini."
 # Halaman uji (bisa di-embed via iframe): http://localhost:8000/llm/
 
 # Test prediction (from another terminal)

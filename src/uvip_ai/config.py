@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     nine_router_url: str = "https://9router-production-fc96.up.railway.app/v1"
     nine_router_key: str = ""
     nine_router_model: str = "de/92r-cbai/deepseek-v4.1-flash"
+    # Model untuk /llm/vision (harus vision-capable; cek /llm/models -> capabilities.vision).
+    nine_router_vision_model: str = "de/92r-cbai/deepseek-v4.1-flash"
     nine_router_fallbacks: str = "gcli/grok-4.6"  # dipisah koma
     nine_router_timeout_s: int = 120
 

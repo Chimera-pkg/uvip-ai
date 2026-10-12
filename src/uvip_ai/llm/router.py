@@ -11,7 +11,9 @@ Endpoint (semua ikut muncul di /docs):
     GET  /llm/chat/completions     -> JSON OpenAI-shape + context
     GET  /llm/models               -> daftar model upstream
     GET  /llm/health               -> status upstream
+    POST /llm/chat                 -> chat multi-turn (body JSON), balas JSON + context
     POST /llm/chat/completions     -> passthrough (drop-in base URL, stream jalan)
+    POST /llm/vision               -> analisa gambar (multipart), balas JSON terstruktur
 
 Catatan penting: upstream SELALU membalas `text/event-stream` walaupun isinya
 satu objek JSON utuh (bukan SSE sungguhan) — lihat `_extract_json()`. Tanpa
@@ -20,6 +22,7 @@ penanganan itu, `JSON.parse()` gagal dan semua permintaan tampak error.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import time
@@ -27,8 +30,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from pydantic import BaseModel, Field
 
 from uvip_ai.config import settings
 
@@ -193,6 +197,100 @@ def _parse_history(raw: Optional[str]) -> Optional[list]:
     return val
 
 
+# ─── Vision (POST /llm/vision) ───────────────────────────────────────────────
+
+# Batas ukuran gambar. Base64 membengkakkan payload ~33%, dan proxy/Vast sering
+# menolak body besar, jadi 8 MB mentah (~11 MB terkirim) adalah batas aman.
+VISION_MAX_BYTES = 8 * 1024 * 1024
+VISION_MAX_TOKENS_CAP = 4096
+
+# Format yang diterima -> media type untuk data URL. Daftar putih (bukan sniff)
+# supaya berkas "aneh" tidak diteruskan mentah ke upstream.
+_VISION_MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+}
+
+def _vision_media_type(filename: Optional[str], content_type: Optional[str]) -> str:
+    """Tentukan media type gambar dari nama file, fallback ke content-type."""
+    ext = Path(filename or "").suffix.lower()
+    if ext in _VISION_MEDIA_TYPES:
+        return _VISION_MEDIA_TYPES[ext]
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct.startswith("image/"):
+        return ct
+    raise HTTPException(
+        status_code=415,
+        detail=("format gambar tidak didukung; pakai salah satu: "
+                + ", ".join(sorted(_VISION_MEDIA_TYPES))),
+    )
+
+async def _read_vision_upload(file: UploadFile) -> bytes:
+    """Baca upload dengan batas ukuran (tolak lebih awal, jangan buffer buta)."""
+    data = await file.read(VISION_MAX_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="file gambar kosong")
+    if len(data) > VISION_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"gambar terlalu besar (maks {VISION_MAX_BYTES // (1024 * 1024)} MB)",
+        )
+    return data
+
+def _vision_int(raw: Optional[str], *, name: str, default: int, lo: int, hi: int) -> int:
+    if raw in (None, ""):
+        return default
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"parameter '{name}' harus angka")
+    return max(lo, min(hi, val))
+
+def _vision_float(raw: Optional[str], *, name: str, default: Optional[float]) -> Optional[float]:
+    if raw in (None, ""):
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"parameter '{name}' harus angka")
+
+async def _ask_vision(*, model: str, prompt: str, system: Optional[str],
+                      image_bytes: bytes, media_type: str, max_tokens: int,
+                      temperature: Optional[float], detail: str) -> dict:
+    """Versi `_ask` untuk gambar: susun content multimodal, lalu fallback sama."""
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+    messages: list = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url",
+             "image_url": {"url": f"data:{media_type};base64,{b64}", "detail": detail}},
+        ],
+    })
+    # Model vision dipisah dari model teks: fallback teks belum tentu bisa
+    # membaca gambar, jadi rantai di sini dibangun dari _fallbacks() yang sama
+    # tapi model utamanya = NINE_ROUTER_VISION_MODEL.
+    chain = list(dict.fromkeys([model, *_fallbacks()]))
+    last: Optional[HTTPException] = None
+    for m in chain:
+        try:
+            out = await _call_upstream(model=m, messages=messages,
+                                       max_tokens=max_tokens, temperature=temperature)
+            out["requested_model"] = model
+            return out
+        except HTTPException as exc:
+            last = exc
+            logger.warning("[llm] vision model=%s gagal: %s", m, exc.detail)
+    assert last is not None
+    raise last
+
 def _common_params(request: Request) -> dict:
     """Ambil parameter GET yang dipakai /llm/ask dan /llm/chat/completions."""
     p = request.query_params
@@ -216,6 +314,68 @@ def _common_params(request: Request) -> dict:
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+
+
+# ─── Chat (POST /llm/chat) ──────────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    """Satu giliran percakapan (bentuk OpenAI)."""
+    role: str = Field(..., description="system | user | assistant")
+    content: str = Field(..., description="Isi pesan")
+
+
+class ChatRequest(BaseModel):
+    """Body POST /llm/chat.
+
+    `messages` = mode percakapan penuh (multi-turn). Kalau kosong, `q` dipakai
+    sebagai satu pesan `user` (ditambah `system` bila diisi).
+    """
+    messages: Optional[list[ChatMessage]] = Field(
+        None, description="Riwayat percakapan (multi-turn). Utamakan ini.")
+    q: Optional[str] = Field(None, description="Pertanyaan singkat (single-turn).")
+    system: Optional[str] = Field(None, description="System prompt.")
+    model: Optional[str] = Field(None, description="Timpa model default.")
+    max_tokens: Optional[int] = Field(1024, ge=1, le=32768)
+    temperature: Optional[float] = Field(None, ge=0, le=2)
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"q": "Jelaskan apa itu H.264 dengan singkat."},
+                {
+                    "system": "Jawab singkat dalam bahasa Indonesia.",
+                    "messages": [
+                        {"role": "user", "content": "Siapa presiden pertama Indonesia?"},
+                        {"role": "assistant", "content": "Ir. Soekarno."},
+                        {"role": "user", "content": "Berapa lama dia menjabat?"},
+                    ],
+                },
+            ]
+        }
+    }
+
+
+def _messages_from_body(req: ChatRequest) -> list:
+    """Ubah body menjadi daftar `messages` untuk upstream (validasi + error jelas)."""
+    if req.messages:
+        out: list = []
+        for m in req.messages:
+            role = (m.role or "").strip().lower()
+            if role not in ("system", "user", "assistant"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"role '{m.role}' tidak dikenal (pakai system|user|assistant)",
+                )
+            if not (m.content or "").strip():
+                raise HTTPException(status_code=400, detail="'content' tidak boleh kosong")
+            out.append({"role": role, "content": m.content})
+        if req.system:
+            out.insert(0, {"role": "system", "content": req.system})
+        return out
+    if (req.q or "").strip():
+        return _build_messages(req.q, req.system, None)
+    raise HTTPException(
+        status_code=400, detail="isi 'q' atau 'messages' (minimal salah satu)")
 
 
 # ─── Endpoint ───────────────────────────────────────────────────────────────
@@ -305,6 +465,51 @@ async def llm_chat_get(request: Request):
     }
 
 
+@router.post("/chat", summary="Chat AI (multi-turn), balas JSON + context")
+async def llm_chat(body: ChatRequest):
+    """Endpoint chat utama: kirim riwayat percakapan, terima jawaban model.
+
+    Bedanya dengan yang lain:
+      - `POST` + body JSON (rapi & enak dites di /docs)
+      - dukung **multi-turn** lewat `messages`
+      - pakai rantai fallback model yang sama dengan `/llm/ask`
+
+    Balasan = bentuk OpenAI + `answer` + `context` (model, waktu, pesan terkirim).
+    """
+    messages = _messages_from_body(body)
+    model = (body.model or "").strip() or settings.nine_router_model
+    out = await _ask(model=model, messages=messages,
+                     max_tokens=body.max_tokens or 1024,
+                     temperature=body.temperature)
+    logger.info("POST /llm/chat model=%s %dms turns=%d len=%d",
+                out["model_used"], out["elapsed_ms"], len(messages), len(out["content"]))
+    raw = out["raw"]
+    return {
+        "id": raw.get("id") or f"chatcmpl-chat-{int(time.time() * 1000)}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": out["model_used"],
+        "requested_model": out["requested_model"],
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": out["content"],
+                **({"reasoning_content": out["reasoning"]} if out["reasoning"] else {}),
+            },
+            "finish_reason": "stop",
+        }],
+        "answer": out["content"],
+        "context": {
+            "upstream": _base_url(),
+            "model": out["model_used"],
+            "requested_model": out["requested_model"],
+            "elapsed_ms": out["elapsed_ms"],
+            "messages": messages,
+        },
+        "usage": raw.get("usage"),
+    }
+
 @router.post("/chat/completions", summary="Passthrough ke upstream (drop-in base URL)")
 async def llm_chat_post(request: Request):
     """Teruskan POST apa adanya (termasuk `stream: true`).
@@ -339,6 +544,75 @@ async def llm_chat_post(request: Request):
         media_type=upstream.headers.get("content-type", "application/json"),
     )
 
+
+@router.post("/vision", summary="Analisa gambar pakai LLM vision, balas JSON terstruktur")
+async def llm_vision(
+    file: UploadFile = File(..., description="Berkas gambar: jpg/jpeg/png/webp/gif/bmp"),
+    prompt: str = Form("Jelaskan isi gambar ini secara singkat."),
+    system: Optional[str] = Form(None),
+    model: Optional[str] = Form(None),
+    max_tokens: Optional[str] = Form(None),
+    temperature: Optional[str] = Form(None),
+    detail: str = Form("auto"),
+):
+    """Kirim gambar + prompt ke LLM vision, balas JSON terstruktur.
+
+    `detail` = auto|low|high (petunjuk ke upstream seberapa detail gambar dibaca).
+    Model default dari `NINE_ROUTER_VISION_MODEL`; `model` di sini menimpanya.
+    """
+    media_type = _vision_media_type(file.filename, file.content_type)
+    image_bytes = await _read_vision_upload(file)
+    if not (prompt or "").strip():
+        raise HTTPException(status_code=400, detail="parameter 'prompt' wajib diisi")
+    if detail not in ("auto", "low", "high"):
+        raise HTTPException(status_code=400, detail="parameter 'detail' harus auto|low|high")
+
+    chosen = (model or "").strip() or settings.nine_router_vision_model
+    out = await _ask_vision(
+        model=chosen,
+        prompt=prompt,
+        system=system,
+        image_bytes=image_bytes,
+        media_type=media_type,
+        max_tokens=_vision_int(max_tokens, name="max_tokens",
+                               default=1024, lo=1, hi=VISION_MAX_TOKENS_CAP),
+        temperature=_vision_float(temperature, name="temperature", default=None),
+        detail=detail,
+    )
+    logger.info("POST /llm/vision model=%s %dms bytes=%d len=%d",
+                out["model_used"], out["elapsed_ms"], len(image_bytes), len(out["content"]))
+    raw = out["raw"]
+    return {
+        "id": raw.get("id") or f"chatcmpl-vision-{int(time.time() * 1000)}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": out["model_used"],
+        "requested_model": out["requested_model"],
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": out["content"],
+                **({"reasoning_content": out["reasoning"]} if out["reasoning"] else {}),
+            },
+            "finish_reason": "stop",
+        }],
+        "answer": out["content"],
+        "context": {
+            "upstream": _base_url(),
+            "model": out["model_used"],
+            "requested_model": out["requested_model"],
+            "elapsed_ms": out["elapsed_ms"],
+            "image": {
+                "filename": file.filename,
+                "media_type": media_type,
+                "bytes": len(image_bytes),
+                "detail": detail,
+            },
+            "prompt": prompt,
+        },
+        "usage": raw.get("usage"),
+    }
 
 @router.get("", include_in_schema=False)
 @router.get("/", include_in_schema=False)
