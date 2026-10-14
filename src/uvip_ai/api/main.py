@@ -34,6 +34,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("uvip_ai")
 
+# PVI scorer: 8 indeks penelitian -> 4 skor perception_prediction.
+from uvip_ai.scoring.pvi_scorer import (  # noqa: E402
+    compute_scores_from_metrics,
+    indices_from_pct_by_class,
+)
+
 # ─── Background Task Storage (video processing) ─────────────────────────────
 video_tasks: dict = {}
 video_tasks_lock = threading.Lock()
@@ -680,17 +686,24 @@ def _verify_playable(path: Path) -> tuple[int, int]:
         raise RuntimeError(f"video tidak bisa di-decode: {path.name}")
     return frame.shape[1], frame.shape[0]
 
-def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int) -> dict:
-    """Format metrics unified — sama persis untuk foto & video."""
+def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int,
+                          metrics: Optional[dict] = None) -> dict:
+    """Format metrics unified — sama persis untuk foto & video.
+
+    Skor persepsi TIDAK lagi dihitung dengan rumus hardcoded (yang selalu
+    mentok 10). Skor diambil dari PVI scorer berbasis 8 indeks penelitian.
+
+    ``metrics`` = hasil ``seg.infer(excel_mode=True)["metrics"]`` (jalur FOTO).
+    Bila tidak tersedia (jalur VIDEO, yang memanggil infer tanpa excel_mode),
+    indeks diturunkan dari ``pct_by_class`` lewat fallback yang identik.
+    """
     green_pct = pct_by_class.get('vegetation', 0) + pct_by_class.get('tree', 0)
     building_pct = pct_by_class.get('building', 0)
     road_pct = pct_by_class.get('road', 0)
     sky_pct = pct_by_class.get('sky', 0)
     sidewalk_pct = pct_by_class.get('sidewalk', 0)
-    beauty_score = min(10, max(0, (green_pct * 0.3) + (sky_pct * 0.4) + (2 if building_pct > 30 else 0)))
-    safety_score = min(10, max(0, (sidewalk_pct * 2) + (road_pct * 0.5)))
-    comfort_score = min(10, max(0, (green_pct * 0.5) + (sky_pct * 0.5)))
-    uvi_score = (beauty_score / 10) * 0.4 + (safety_score / 10) * 0.3 + (comfort_score / 10) * 0.3
+    indices = metrics if metrics else indices_from_pct_by_class(pct_by_class)
+    scores = compute_scores_from_metrics(indices)
     return {
         "segmentation_results": {
             "green_coverage_pct": round(green_pct, 4),
@@ -699,12 +712,7 @@ def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int
             "visual_clutter_index": round(1 - (green_pct / 100), 4),
             "sky_visibility_pct": round(sky_pct, 4),
         },
-        "perception_prediction": {
-            "beauty_score": round(beauty_score, 2),
-            "safety_score": round(safety_score, 2),
-            "comfort_score": round(comfort_score, 2),
-            "uvi_score": round(uvi_score, 2),
-        },
+        "perception_prediction": scores,
         "shap_values": [],
         "metrics_source": {
             "pct_by_class": {k.replace(" ", "_"): round(v, 2) for k, v in pct_by_class.items()},
@@ -731,7 +739,11 @@ def post_process(path: Path) -> dict:
             raise ValueError(f"Cannot read image: {path}")
         
         # Run inference
-        result = seg.infer(image, excel_mode=True)
+        # PENTING: cv2.imread() menghasilkan BGR, sedangkan SegFormer dilatih
+        # dengan RGB. Tanpa konversi ini, prediksi meleset (mis. building
+        # 24.98% vs 27.92%). Jalur video sudah benar - disamakan di sini.
+        # `image` tetap BGR untuk mask/overlay di bawah (tidak diubah).
+        result = seg.infer(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), excel_mode=True)
         seg_map = result["seg_map"]
         metrics = result["metrics"]
         pct_by_class = result["pct_by_class"]
@@ -771,7 +783,7 @@ def post_process(path: Path) -> dict:
         pil_overlay.save(str(overlay_path))
         logger.info("🎨 Overlay saved: %s", overlay_path)
         
-        unified = build_unified_metrics(pct_by_class, seg_map.shape, int((time.time() - start_time) * 1000))
+        unified = build_unified_metrics(pct_by_class, seg_map.shape, int((time.time() - start_time) * 1000), metrics=metrics)
         result_response = {
             "privacy_masked_url": f"/uploads/masks/{mask_path.name}",
             "segmentation_url": f"/uploads/segmentation/{seg_path.name}",

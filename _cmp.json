@@ -1,0 +1,1082 @@
+[
+ {
+  "file": "ALUN_ALUN_MERDEKA_BS-01.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2792,
+  "vegetation_coverage_index": 0.3477,
+  "sky_openness_index": 0.0223,
+  "ground_accessibility_index": 0.3104,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.5869,
+  "traffic_infrastructure_index": 0.0192,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2007
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_BS-02.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.4368,
+  "vegetation_coverage_index": 0.2568,
+  "sky_openness_index": 0.0324,
+  "ground_accessibility_index": 0.2589,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.3176,
+  "traffic_infrastructure_index": 0.0066,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1531
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_BS-03.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3354,
+  "vegetation_coverage_index": 0.1888,
+  "sky_openness_index": 0.1174,
+  "ground_accessibility_index": 0.2955,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 1.4273,
+  "traffic_infrastructure_index": 0.0264,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.3912
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_BS-04.jpg",
+  "now": {
+   "beauty": 9.96,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.4137,
+  "vegetation_coverage_index": 0.2652,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.2893,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.8716,
+  "traffic_infrastructure_index": 0.0064,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2372
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_BS-05.jpg",
+  "now": {
+   "beauty": 7.61,
+   "safety": 8.92,
+   "comfort": 9.07,
+   "uvi": 0.84
+  },
+  "building_visibility_index": 0.6001,
+  "vegetation_coverage_index": 0.1651,
+  "sky_openness_index": 0.0164,
+  "ground_accessibility_index": 0.1642,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.5815,
+  "traffic_infrastructure_index": 0.041,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1828
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_BS-06.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2317,
+  "vegetation_coverage_index": 0.5875,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.1638,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.2926,
+  "traffic_infrastructure_index": 0.0023,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1417
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_BU-01.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.1585,
+  "vegetation_coverage_index": 0.17,
+  "sky_openness_index": 0.3116,
+  "ground_accessibility_index": 0.2577,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 2.6061,
+  "traffic_infrastructure_index": 0.0247,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.6959
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_BU-02.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3291,
+  "vegetation_coverage_index": 0.3903,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.2498,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.3441,
+  "traffic_infrastructure_index": 0.0173,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1457
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_BU-03.jpg",
+  "now": {
+   "beauty": 6.13,
+   "safety": 10,
+   "comfort": 6.77,
+   "uvi": 0.75
+  },
+  "building_visibility_index": 0.5431,
+  "vegetation_coverage_index": 0.1285,
+  "sky_openness_index": 0.007,
+  "ground_accessibility_index": 0.2251,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.0857,
+  "traffic_infrastructure_index": 0.0851,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.0873
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_BU-04.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3598,
+  "vegetation_coverage_index": 0.2406,
+  "sky_openness_index": 0.0574,
+  "ground_accessibility_index": 0.2769,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 1.3928,
+  "traffic_infrastructure_index": 0.0157,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.3562
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_BU-05.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.4926,
+  "vegetation_coverage_index": 0.2686,
+  "sky_openness_index": 0.031,
+  "ground_accessibility_index": 0.1454,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.9763,
+  "traffic_infrastructure_index": 0.0243,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2641
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_BU-06.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2859,
+  "vegetation_coverage_index": 0.3142,
+  "sky_openness_index": 0.0277,
+  "ground_accessibility_index": 0.3,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.0749,
+  "traffic_infrastructure_index": 0.0637,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1076
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_SB-01.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2911,
+  "vegetation_coverage_index": 0.3561,
+  "sky_openness_index": 0.0092,
+  "ground_accessibility_index": 0.283,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.3726,
+  "traffic_infrastructure_index": 0.046,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1536
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_SB-02.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2697,
+  "vegetation_coverage_index": 0.3522,
+  "sky_openness_index": 0.0082,
+  "ground_accessibility_index": 0.2829,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 2.8414,
+  "traffic_infrastructure_index": 0.0244,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.5957
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_SB-03.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3795,
+  "vegetation_coverage_index": 0.2579,
+  "sky_openness_index": 0.0119,
+  "ground_accessibility_index": 0.1726,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 1.5499,
+  "traffic_infrastructure_index": 0.0267,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.3515
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_SB-04.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3664,
+  "vegetation_coverage_index": 0.2518,
+  "sky_openness_index": 0.0485,
+  "ground_accessibility_index": 0.3117,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.5097,
+  "traffic_infrastructure_index": 0.0067,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1972
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_SB-05.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3585,
+  "vegetation_coverage_index": 0.3665,
+  "sky_openness_index": 0.0057,
+  "ground_accessibility_index": 0.2016,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 1.8601,
+  "traffic_infrastructure_index": 0.0039,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.4163
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_SB-06.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3233,
+  "vegetation_coverage_index": 0.3777,
+  "sky_openness_index": 0.0025,
+  "ground_accessibility_index": 0.2618,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.5722,
+  "traffic_infrastructure_index": 0.0185,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1877
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_ST-01.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.1445,
+  "vegetation_coverage_index": 0.4385,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.2912,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.3035,
+  "traffic_infrastructure_index": 0.0307,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1363
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_ST-02.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2979,
+  "vegetation_coverage_index": 0.4149,
+  "sky_openness_index": 0.0123,
+  "ground_accessibility_index": 0.2098,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 2.4418,
+  "traffic_infrastructure_index": 0.014,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.5268
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_ST-03.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2706,
+  "vegetation_coverage_index": 0.3389,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.2403,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 2.2007,
+  "traffic_infrastructure_index": 0.0858,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.4703
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_ST-04.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2321,
+  "vegetation_coverage_index": 0.3491,
+  "sky_openness_index": 0.0015,
+  "ground_accessibility_index": 0.3957,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.5022,
+  "traffic_infrastructure_index": 0.0038,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1796
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_ST-05.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2072,
+  "vegetation_coverage_index": 0.2806,
+  "sky_openness_index": 0.0443,
+  "ground_accessibility_index": 0.2134,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 2.7508,
+  "traffic_infrastructure_index": 0.1176,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.5818
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_ST-06.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2502,
+  "vegetation_coverage_index": 0.5094,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.2288,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.1308,
+  "traffic_infrastructure_index": 0.0028,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1124
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TS-01.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.1715,
+  "vegetation_coverage_index": 0.4105,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.2542,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.9037,
+  "traffic_infrastructure_index": 0.0418,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2394
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TS-02.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2273,
+  "vegetation_coverage_index": 0.3555,
+  "sky_openness_index": 0.0069,
+  "ground_accessibility_index": 0.2748,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 1.3301,
+  "traffic_infrastructure_index": 0.1005,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.3199
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TS-03.jpg",
+  "now": {
+   "beauty": 9.22,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 0.97
+  },
+  "building_visibility_index": 0.2608,
+  "vegetation_coverage_index": 0.2965,
+  "sky_openness_index": 0.0081,
+  "ground_accessibility_index": 0.317,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.3355,
+  "traffic_infrastructure_index": 0.1003,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1419
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TS-04.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2366,
+  "vegetation_coverage_index": 0.4159,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.2738,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 1.5466,
+  "traffic_infrastructure_index": 0.0199,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.3616
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TS-05.jpg",
+  "now": {
+   "beauty": 7.56,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 0.9
+  },
+  "building_visibility_index": 0.2133,
+  "vegetation_coverage_index": 0.2519,
+  "sky_openness_index": 0.0002,
+  "ground_accessibility_index": 0.3003,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 1.1041,
+  "traffic_infrastructure_index": 0.1464,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2669
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TS-06.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2085,
+  "vegetation_coverage_index": 0.5234,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.2299,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.2049,
+  "traffic_infrastructure_index": 0.0288,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1247
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TU-01.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.1478,
+  "vegetation_coverage_index": 0.5113,
+  "sky_openness_index": 0.016,
+  "ground_accessibility_index": 0.2656,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.6413,
+  "traffic_infrastructure_index": 0.0342,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.211
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TU-02.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2203,
+  "vegetation_coverage_index": 0.091,
+  "sky_openness_index": 0.2426,
+  "ground_accessibility_index": 0.4245,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.2776,
+  "traffic_infrastructure_index": 0.0021,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2506
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TU-03.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2473,
+  "vegetation_coverage_index": 0.3287,
+  "sky_openness_index": 0.0922,
+  "ground_accessibility_index": 0.3026,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.1138,
+  "traffic_infrastructure_index": 0.0127,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1501
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TU-04.jpg",
+  "now": {
+   "beauty": 9.94,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3271,
+  "vegetation_coverage_index": 0.1566,
+  "sky_openness_index": 0.0811,
+  "ground_accessibility_index": 0.3967,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.7499,
+  "traffic_infrastructure_index": 0.0094,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2554
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TU-05.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2335,
+  "vegetation_coverage_index": 0.4868,
+  "sky_openness_index": 0.0019,
+  "ground_accessibility_index": 0.1918,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 2.128,
+  "traffic_infrastructure_index": 0.0164,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.466
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_TU-06.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.1649,
+  "vegetation_coverage_index": 0.3761,
+  "sky_openness_index": 0.0325,
+  "ground_accessibility_index": 0.3689,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.9392,
+  "traffic_infrastructure_index": 0.0148,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2717
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_UB-01.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.35,
+  "vegetation_coverage_index": 0.3966,
+  "sky_openness_index": 0.0291,
+  "ground_accessibility_index": 0.1476,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.0698,
+  "traffic_infrastructure_index": 0.0416,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1043
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_UB-02.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3657,
+  "vegetation_coverage_index": 0.1929,
+  "sky_openness_index": 0.182,
+  "ground_accessibility_index": 0.2356,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.4437,
+  "traffic_infrastructure_index": 0.002,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2466
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_UB-03.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2265,
+  "vegetation_coverage_index": 0.3482,
+  "sky_openness_index": 0.0824,
+  "ground_accessibility_index": 0.2792,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.2486,
+  "traffic_infrastructure_index": 0.0019,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1672
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_UB-04.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3255,
+  "vegetation_coverage_index": 0.4751,
+  "sky_openness_index": 0.0129,
+  "ground_accessibility_index": 0.1655,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.0883,
+  "traffic_infrastructure_index": 0.0128,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1067
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_UB-05.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3527,
+  "vegetation_coverage_index": 0.3322,
+  "sky_openness_index": 0.0514,
+  "ground_accessibility_index": 0.1818,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.1355,
+  "traffic_infrastructure_index": 0.0614,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1257
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_UT-01.jpg",
+  "now": {
+   "beauty": 7.53,
+   "safety": 10,
+   "comfort": 8.47,
+   "uvi": 0.86
+  },
+  "building_visibility_index": 0.4039,
+  "vegetation_coverage_index": 0.1244,
+  "sky_openness_index": 0.045,
+  "ground_accessibility_index": 0.2044,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.668,
+  "traffic_infrastructure_index": 0.1868,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2026
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_UT-02.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 8.78,
+   "comfort": 10,
+   "uvi": 0.96
+  },
+  "building_visibility_index": 0.2926,
+  "vegetation_coverage_index": 0.5078,
+  "sky_openness_index": 0.0121,
+  "ground_accessibility_index": 0.1601,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.0857,
+  "traffic_infrastructure_index": 0.0097,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1065
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_UT-03.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 8.79,
+   "comfort": 10,
+   "uvi": 0.96
+  },
+  "building_visibility_index": 0.5374,
+  "vegetation_coverage_index": 0.2812,
+  "sky_openness_index": 0.0189,
+  "ground_accessibility_index": 0.1286,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.1967,
+  "traffic_infrastructure_index": 0.0204,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1192
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_UT-04.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2172,
+  "vegetation_coverage_index": 0.4816,
+  "sky_openness_index": 0.0102,
+  "ground_accessibility_index": 0.2017,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.4076,
+  "traffic_infrastructure_index": 0.034,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1604
+ },
+ {
+  "file": "ALUN_ALUN_MERDEKA_UT-05.jpg",
+  "now": {
+   "beauty": 9.93,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.4571,
+  "vegetation_coverage_index": 0.2541,
+  "sky_openness_index": 0.0075,
+  "ground_accessibility_index": 0.1771,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.1986,
+  "traffic_infrastructure_index": 0.0767,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1105
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BS-01.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.1172,
+  "vegetation_coverage_index": 0.4754,
+  "sky_openness_index": 0.0461,
+  "ground_accessibility_index": 0.3135,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.5229,
+  "traffic_infrastructure_index": 0.0057,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2059
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BS-02.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.0804,
+  "vegetation_coverage_index": 0.5051,
+  "sky_openness_index": 0.0747,
+  "ground_accessibility_index": 0.2971,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 1.2188,
+  "traffic_infrastructure_index": 0.0046,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.3463
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BS-03.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.0547,
+  "vegetation_coverage_index": 0.5209,
+  "sky_openness_index": 0.033,
+  "ground_accessibility_index": 0.37,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.7378,
+  "traffic_infrastructure_index": 0.0013,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2437
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BS-04.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2073,
+  "vegetation_coverage_index": 0.5078,
+  "sky_openness_index": 0.0002,
+  "ground_accessibility_index": 0.1644,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.7784,
+  "traffic_infrastructure_index": 0.0972,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2199
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BS-05.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 6.11,
+   "comfort": 10,
+   "uvi": 0.88
+  },
+  "building_visibility_index": 0.073,
+  "vegetation_coverage_index": 0.6826,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.0765,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.3694,
+  "traffic_infrastructure_index": 0.0114,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.1468
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BS-06.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.0604,
+  "vegetation_coverage_index": 0.5599,
+  "sky_openness_index": 0.0276,
+  "ground_accessibility_index": 0.2894,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.6161,
+  "traffic_infrastructure_index": 0.0072,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2149
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BS-07.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 7.98,
+   "comfort": 10,
+   "uvi": 0.94
+  },
+  "building_visibility_index": 0.2879,
+  "vegetation_coverage_index": 0.3529,
+  "sky_openness_index": 0.0792,
+  "ground_accessibility_index": 0.1173,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 6.1781,
+  "traffic_infrastructure_index": 0.0038,
+  "heritage_dominance_index": 0.0,
+  "PVI": 1.2207
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BU-01.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.0656,
+  "vegetation_coverage_index": 0.5274,
+  "sky_openness_index": 0.0553,
+  "ground_accessibility_index": 0.3132,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 1.0049,
+  "traffic_infrastructure_index": 0.0029,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2998
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BU-02.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.0152,
+  "vegetation_coverage_index": 0.5826,
+  "sky_openness_index": 0.0022,
+  "ground_accessibility_index": 0.2958,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 4.8011,
+  "traffic_infrastructure_index": 0.0001,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.9542
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BU-03.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.0365,
+  "vegetation_coverage_index": 0.5441,
+  "sky_openness_index": 0.0285,
+  "ground_accessibility_index": 0.3462,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 1.7925,
+  "traffic_infrastructure_index": 0.0015,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.4298
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BU-04.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.0434,
+  "vegetation_coverage_index": 0.5025,
+  "sky_openness_index": 0.0892,
+  "ground_accessibility_index": 0.2232,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 2.0434,
+  "traffic_infrastructure_index": 0.0515,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.4929
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BU-05.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.3882,
+  "vegetation_coverage_index": 0.3387,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.1785,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 4.0406,
+  "traffic_infrastructure_index": 0.0065,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.8023
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BU-06.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.2266,
+  "vegetation_coverage_index": 0.5709,
+  "sky_openness_index": 0.0053,
+  "ground_accessibility_index": 0.1413,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 0.6691,
+  "traffic_infrastructure_index": 0.0392,
+  "heritage_dominance_index": 0.0,
+  "PVI": 0.2082
+ },
+ {
+  "file": "ALUN_ALUN_TUGU_BU-07.jpg",
+  "now": {
+   "beauty": 10,
+   "safety": 10,
+   "comfort": 10,
+   "uvi": 1.0
+  },
+  "building_visibility_index": 0.1283,
+  "vegetation_coverage_index": 0.5187,
+  "sky_openness_index": 0.0,
+  "ground_accessibility_index": 0.1881,
+  "human_activity_index": 0.0,
+  "vehicle_intensity_index": 6.3031,
+  "traffic_infrastructure_index": 0.004,
+  "heritage_dominance_index": 0.0,
+  "PVI": 1.2129
+ }
+]

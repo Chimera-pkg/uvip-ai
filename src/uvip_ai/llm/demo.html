@@ -36,13 +36,15 @@ GET  /llm/models                           -&gt; daftar model upstream
 GET  /llm/health                           -&gt; status upstream
 POST /llm/chat                             -&gt; chat multi-turn (body JSON) -&gt; JSON
 POST /llm/chat/completions                 -&gt; passthrough (stream jalan)
-POST /llm/vision                           -&gt; analisa gambar (multipart) -&gt; JSON</pre>
+POST /llm/vision                           -&gt; analisa gambar (multipart) -&gt; JSON
+POST /llm/advise                           -&gt; foto + metrik -&gt; rekomendasi + prompt gambar</pre>
 
   <h2>Uji langsung</h2>
   <div class="row">
     <input id="q" value="Bikin 3 rekomendasi nama warung kopi, singkat saja" placeholder="prompt...">
     <select id="model">
-      <option value="de/92r-cbai/deepseek-v4.1-flash">de/92r-cbai/deepseek-v4.1-flash</option>
+      <option value="lo/deepseek-v4.1-flash">lo/deepseek-v4.1-flash</option>
+      <option value="x/gpt-6-luna">x/gpt-6-luna</option>
       <option value="gcli/grok-4.6">gcli/grok-4.6</option>
     </select>
     <button id="go">Kirim</button>
@@ -67,13 +69,27 @@ POST /llm/vision                           -&gt; analisa gambar (multipart) -&gt
   <div class="row">
     <input id="cprompt" value="Jelaskan apa itu H.264 dengan singkat." placeholder="pertanyaan...">
     <select id="cmodel">
-      <option value="de/92r-cbai/deepseek-v4.1-flash">de/92r-cbai/deepseek-v4.1-flash</option>
+      <option value="lo/deepseek-v4.1-flash">lo/deepseek-v4.1-flash</option>
+      <option value="x/gpt-6-luna">x/gpt-6-luna</option>
       <option value="gcli/grok-4.6">gcli/grok-4.6</option>
     </select>
     <button id="cgo">Kirim</button>
   </div>
   <label>fetch() JSON body -&gt; JSON dari POST /llm/chat (riwayat disimpan, jadi multi-turn)</label>
   <pre id="cout">—</pre>
+
+  <h2>Uji advise (POST /llm/advise)</h2>
+  <div class="row">
+    <input type="file" id="afile" accept="image/*">
+    <input id="aloc" value="Alun-Alun Merdeka, Malang" placeholder="lokasi...">
+    <button id="ago">Analisa + Rekomendasi</button>
+  </div>
+  <label>Metrik segmentasi (JSON, opsional) — kosongkan untuk analisa murni dari foto</label>
+  <input id="amet" style="width:100%" value='{"vegetation_coverage_index":0.3477,"sky_openness_index":0.0223,"ground_accessibility_index":0.1664,"walkability_ratio":0.0238}'>
+  <label>Skor persepsi (JSON, opsional)</label>
+  <input id="ascore" style="width:100%" value='{"beauty_score":4.2,"safety_score":3.1,"comfort_score":2.9,"uvi_score":0.36}'>
+  <label>fetch() multipart -&gt; JSON terstruktur dari POST /llm/advise</label>
+  <pre id="aout">—</pre>
 
 <script>
 const q = document.getElementById('q');
@@ -162,6 +178,44 @@ async function chat() {
 
 cgo.addEventListener('click', chat);
 cprompt.addEventListener('keydown', (e) => { if (e.key === 'Enter') chat(); });
+
+// --- Uji /llm/advise -------------------------------------------------------
+const afile = document.getElementById('afile');
+const aloc = document.getElementById('aloc');
+const amet = document.getElementById('amet');
+const ascore = document.getElementById('ascore');
+const aout = document.getElementById('aout');
+const ago = document.getElementById('ago');
+
+async function advise() {
+  if (!afile.files.length) { aout.textContent = 'Pilih gambar dulu.'; return; }
+  ago.disabled = true; aout.textContent = '... (model vision bisa butuh 10-40 detik)';
+  const fd = new FormData();
+  fd.append('file', afile.files[0]);
+  if (aloc.value.trim()) fd.append('location', aloc.value.trim());
+  if (amet.value.trim()) fd.append('metrics', amet.value.trim());
+  if (ascore.value.trim()) fd.append('scores', ascore.value.trim());
+  try {
+    const res = await fetch('/llm/advise', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) {
+      aout.textContent = `[HTTP ${res.status}] ` + JSON.stringify(data, null, 2);
+    } else if (data.advice) {
+      // Tampilkan yang terstruktur dulu, lalu balasan mentah sebagai cadangan.
+      aout.textContent = JSON.stringify(data.advice, null, 2)
+        + `\n\n--- meta: model=${data.model} ${data.context.elapsed_ms}ms`
+        + ` parse_ok=${data.context.parse_ok} repair=${data.context.repair_used}`;
+    } else {
+      aout.textContent = data.answer || JSON.stringify(data, null, 2);
+    }
+  } catch (e) {
+    aout.textContent = '[ERROR] ' + e.message;
+  } finally {
+    ago.disabled = false;
+  }
+}
+
+ago.addEventListener('click', advise);
 </script>
 </body>
 </html>

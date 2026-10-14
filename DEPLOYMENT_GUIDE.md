@@ -64,6 +64,16 @@ curl -X POST "http://localhost:8000/llm/vision" \
     -F "prompt=Jelaskan kondisi jalan pada gambar ini."
 # Halaman uji (bisa di-embed via iframe): http://localhost:8000/llm/
 
+# Foto + metrik UVI -> rekomendasi perbaikan (3 peran) + prompt gambar (JSON)
+curl -X POST "http://localhost:8000/llm/advise" \
+    -F "file=@data/extracted/photos/KAYUTANGAN/KAYUTANGAN_BS-01.jpg" \
+    -F 'location=Alun-Alun Merdeka, Malang' \
+    -F 'metrics={"vegetation_coverage_index":0.3477,"sky_openness_index":0.0223,"walkability_ratio":0.0238}' \
+    -F 'scores={"beauty_score":4.2,"safety_score":3.1,"comfort_score":2.9,"uvi_score":0.36}'
+# Balasan: field "advice" = objek terstruktur (diagnosis, masalah, rekomendasi,
+# prompt_gambar, before_after, caveat). Semua parameter selain "file" opsional —
+# tanpa metrics/scores, analisa dilakukan murni dari foto.
+
 # Test prediction (from another terminal)
 curl -X POST "http://localhost:8000/predict" \
     -F "file=@data/extracted/photos/KAYUTANGAN/KAYUTANGAN_ST-01.jpg"

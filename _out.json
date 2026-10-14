@@ -1,0 +1,38 @@
+{
+  "foto": "ALUN_ALUN_MERDEKA_BS-01.jpg",
+  "A_DIPAKAI_oleh_API": {
+    "green_coverage_pct": 34.7689,
+    "building_coverage_pct": 27.9153,
+    "walkability_ratio": 0.0238,
+    "visual_clutter_index": 0.6523,
+    "sky_visibility_pct": 2.2349
+  },
+  "A2_prediksi_API": {
+    "beauty_score": 10,
+    "safety_score": 10,
+    "comfort_score": 10,
+    "uvi_score": 1.0
+  },
+  "B_INDEKS_PENELITIAN_dibuang": {
+    "building_visibility_index": 0.2792,
+    "vegetation_coverage_index": 0.3477,
+    "sky_openness_index": 0.0223,
+    "ground_accessibility_index": 0.3104,
+    "human_activity_index": 0.0,
+    "vehicle_intensity_index": 0.5869,
+    "traffic_infrastructure_index": 0.0192,
+    "heritage_dominance_index": 0.0,
+    "_static_normalization_factor": 1.0217,
+    "_moving_object_percentage": 1.4605,
+    "_raw_percentages": {
+      "building": 27.9153,
+      "vegetation": 34.7689,
+      "sky": 2.2349,
+      "road": 30.2983,
+      "sidewalk": 0.7399,
+      "signage": 0.0148,
+      "street_furniture": 1.9031,
+      "heritage": 0
+    }
+  }
+}

@@ -46,10 +46,18 @@ class Settings(BaseSettings):
     # menambah varian GET supaya prompt bisa dipanggil dari browser/<iframe>/curl.
     nine_router_url: str = "https://9router-production-fc96.up.railway.app/v1"
     nine_router_key: str = ""
-    nine_router_model: str = "de/92r-cbai/deepseek-v4.1-flash"
-    # Model untuk /llm/vision (harus vision-capable; cek /llm/models -> capabilities.vision).
-    nine_router_vision_model: str = "de/92r-cbai/deepseek-v4.1-flash"
-    nine_router_fallbacks: str = "gcli/grok-4.6"  # dipisah koma
+    # Model default /llm/ask & /llm/chat. JANGAN pakai id "de/..." (sudah 404 di
+    # gateway). Id yang terverifikasi hidup ada di GET /llm/models.
+    nine_router_model: str = "lo/deepseek-v4.1-flash"
+    # Model untuk /llm/vision & /llm/advise (harus vision-capable; cek
+    # /llm/models -> capabilities.vision). Terverifikasi: 4.8s & akurat.
+    # HINDARI x/glm-5.3-flash (mengaku buta) & x/deepseek-v4.1-flash (balas kosong).
+    nine_router_vision_model: str = "lo/glm-5.3-flash"
+    # Model khusus POST /llm/advise (analisa foto -> rekomendasi + prompt gambar).
+    nine_router_advise_model: str = "lo/glm-5.3-flash"
+    # Rantai fallback (dipisah koma). Ujungnya sengaja grok: paling tajam,
+    # walau lambat (~44s) - dipakai hanya kalau model utama gagal.
+    nine_router_fallbacks: str = "x/gpt-6-luna,lo/deepseek-v4.1-flash,gcli/grok-4.6"
     nine_router_timeout_s: int = 120
 
     def resolve_device(self) -> str:
