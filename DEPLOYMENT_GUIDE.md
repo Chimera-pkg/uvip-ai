@@ -74,9 +74,26 @@ curl -X POST "http://localhost:8000/llm/advise" \
 # prompt_gambar, before_after, caveat). Semua parameter selain "file" opsional —
 # tanpa metrics/scores, analisa dilakukan murni dari foto.
 
+# Generate ulang foto + saran dari hasil /ai/process (OpenAI Images API)
+curl -X POST "http://localhost:8000/llm/generate" \
+    -F "result=uploads/results/result_KAYUTANGAN_ST-01_1792295870252.json" \
+    -F "photo_path=uploads/masks/mask_KAYUTANGAN_ST-01_1792295870252.jpg" \
+    -F "size=1024x1024"
+# "result" menerima path file result_*.json ATAU JSON inline.
+# Balasan: generated_image_url (PNG di uploads/generated/), raw_image_url,
+# suggestions (kalimat saran, bukan LLM), prompt_image, elapsed_ms.
+# Butuh OPENAI_API_KEY di .env. Model default gpt-image-1; size valid
+# 1024x1024 | 1536x1024 | 1024x1536. Parameter "prompt" opsional untuk override.
+
 # Test prediction (from another terminal)
 curl -X POST "http://localhost:8000/predict" \
     -F "file=@data/extracted/photos/KAYUTANGAN/KAYUTANGAN_ST-01.jpg"
+
+# Arsip file original: /ai/process & /ai/process-video TIDAK lagi menghapus
+# file upload. File asli disimpan di uploads/originals/ dan dikembalikan di
+# field "original_image_url" (foto) / "original_video_url" (video).
+# Backend menerimanya lewat callback dan menyimpannya di DB
+# (segmentation_results.original_image_url / video_output_segmentations.original_video_url).
 ```
 
 > **LLM gateway butuh API key.** Set `NINE_ROUTER_KEY` di `.env` (gitignored)
@@ -147,7 +164,13 @@ gunicorn src.api.main:app \
 ├── logs/
 │   ├── access.log            # Request logs
 │   └── error.log             # Error logs
-└── test_outputs/             # Results storage
+├── test_outputs/             # Results storage
+└── uploads/                   # Arsip upload (binary, diabaikan git)
+    ├── originals/             # File ORIGINAL foto & video (tidak pernah dihapus)
+    ├── masks/                 # Versi privacy-masked
+    ├── segmentation/          # Peta segmentasi + overlay
+    ├── videos/                # Video hasil segmentasi
+    └── results/               # JSON hasil analisis (ikut di-version control)
 ```
 
 ---

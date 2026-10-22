@@ -42,13 +42,35 @@ models/*.pth
 models/*.h5
 models/*.safetensors
 !models/.gitkeep
+
+# HuggingFace model cache (berkas besar, diunduh ulang otomatis)
+models/hf_cache/
+
+# File debug sementara
+_proc.json
+_cache_metrics_*.json
 DATA LONG LAT DAN TABEL FOTO.pdf
 
 # Test outputs
 test_outputs/
 demo_outputs/
 outputs/
-results/
+/results/
+
+# Upload artifacts: binary (foto/video/mask/segmentasi) - tetap di disk, tidak di git.
+# File ORIGINAL hasil arsip server AI ada di uploads/originals/.
+uploads/originals/
+uploads/masks/
+uploads/segmentation/
+uploads/generated/
+uploads/videos/
+uploads/temp/
+uploads/results/
+uploads/*.mp4
+uploads/*.mov
+uploads/*.jpg
+uploads/*.jpeg
+uploads/*.png
 
 # Logs
 *.log

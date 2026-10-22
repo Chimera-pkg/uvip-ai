@@ -140,6 +140,29 @@ flowchart LR
 - `uvi_score` rentangnya **0-1**, bukan 0-10.
 - Video: `avg_pct[k] = sum(p[k] for p in frame_pcts) / n`.
 
+
+---
+
+## 4b. Arsip File ORIGINAL (foto & video)
+
+```mermaid
+flowchart LR
+    A[Upload masuk] --> B["save_upload(file, 'originals')<br/>uploads/originals/"]
+    B --> C[Proses AI<br/>mask + segmentasi + overlay]
+    C --> D[Response + field original_image_url<br/>/ original_video_url]
+    B -.->|file TIDAK dihapus| E[Arsip tetap di disk]
+```
+
+- `save_upload()` menerima `subdir`; file original disimpan di `uploads/originals/`,
+  terpisah dari file hasil (`uploads/masks/`, `uploads/segmentation/`, `uploads/videos/`).
+- File original **tidak pernah dihapus** setelah proses selesai (dulu `path.unlink()`
+  dihapus di akhir `process_photo`).
+- `_upload_url(path)` mengembalikan URL publik hanya kalau file berada di dalam
+  `uploads/`; file di luar folder itu tidak punya route `/uploads/...` -> `None`,
+  bukan URL yang pasti 404.
+- Backend-uvip menerima path tersebut lewat callback dan menyimpannya di
+  `segmentation_results.original_image_url` / `video_output_segmentations.original_video_url`.
+
 ---
 
 ## 5. Titik Diagnosa

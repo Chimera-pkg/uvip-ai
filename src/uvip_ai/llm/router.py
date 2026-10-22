@@ -16,6 +16,8 @@ Endpoint (semua ikut muncul di /docs):
     POST /llm/vision               -> analisa gambar (multipart), balas JSON terstruktur
     POST /llm/advise               -> foto + metrik UVI -> rekomendasi perbaikan
                                       (3 peran) + prompt gambar. Balas JSON terstruktur.
+    POST /llm/generate             -> hasil /ai/process -> prompt gambar -> OpenAI
+                                      Images API + saran. Balas JSON terstruktur.
 
 Catatan penting: upstream SELALU membalas `text/event-stream` walaupun isinya
 satu objek JSON utuh (bukan SSE sungguhan) — lihat `_extract_json()`. Tanpa
@@ -36,7 +38,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
-from uvip_ai.config import settings
+from uvip_ai.config import settings, PROJECT_ROOT
 
 logger = logging.getLogger("uvip_ai.llm")
 
@@ -190,7 +192,18 @@ async def _call_upstream(*, model: str, messages: list, max_tokens: int,
     elapsed_ms = int((time.time() - t0) * 1000)
 
     if res.status_code >= 400 or data.get("error"):
-        msg = (data.get("error") or {}).get("message") or f"HTTP {res.status_code}"
+        err = data.get("error")
+        # Upstream membalas DUA bentuk berbeda:
+        #   {"error": "API key required for remote API access"}   <- STRING (401 gateway)
+        #   {"error": {"message": "..."}}                          <- OBJEK (OpenAI-style)
+        # Kode lama mengasumsikan selalu objek -> `.get()` pada str -> AttributeError
+        # -> FastAPI membalas 500 "Internal Server Error" tanpa pesan yang berguna.
+        if isinstance(err, dict):
+            msg = err.get("message") or f"HTTP {res.status_code}"
+        elif err:
+            msg = str(err)
+        else:
+            msg = f"HTTP {res.status_code}"
         raise HTTPException(status_code=res.status_code if res.status_code >= 400 else 502,
                             detail=msg)
 
@@ -997,6 +1010,329 @@ async def llm_advise(
             "location": location,
         },
         "usage": raw.get("usage"),
+    }
+
+# ─── POST /llm/generate: baca hasil /ai/process -> generate ulang foto ───
+
+# Ukuran valid gpt-image-1 (resmi OpenAI).
+_OPENAI_IMAGE_SIZES = ("1024x1024", "1536x1024", "1024x1536")
+
+
+def _num(d: Optional[dict], key: str) -> Optional[float]:
+    """Ambil angka dari dict, toleran None/str. Kembalikan None kalau tidak ada."""
+    if not isinstance(d, dict):
+        return None
+    v = d.get(key)
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pct_or_index(d: Optional[dict], *keys: str) -> Optional[float]:
+    """Ambil angka pertama dari daftar kunci yang ada. Nilai tetap (persen/index)."""
+    for k in keys:
+        val = _num(d, k)
+        if val is not None:
+            return val
+    return None
+
+
+def _seg_view(target: dict) -> dict:
+    """Gabungan angka segmentasi dari dua tempat di keluaran /ai/process.
+
+    ``metrics_source.pct_by_class`` memakai nama kelas mentah
+    (``vegetation``, ``sidewalk``, ``road``, ``vehicle`` ...), sedangkan
+    ``segmentation_results`` memakai nama metrik (``green_coverage_pct``,
+    ``walkability_ratio`` ...). Keduanya digabung; yang terakhir menang.
+    """
+    out: dict = {}
+    src = target.get("metrics_source") if isinstance(target, dict) else None
+    if isinstance(src, dict):
+        pbc = src.get("pct_by_class")
+        if isinstance(pbc, dict):
+            out.update({k: v for k, v in pbc.items() if isinstance(v, (int, float))})
+    seg = target.get("segmentation_results") if isinstance(target, dict) else None
+    if isinstance(seg, dict):
+        out.update({k: v for k, v in seg.items() if isinstance(v, (int, float))})
+    return out
+
+
+def _veh_pct(seg: dict) -> Optional[float]:
+    """Nilai dominasi kendaraan dalam persen (0..100)."""
+    v = _pct_or_index(seg, "vehicle_pct", "vehicle")
+    if v is None:
+        return None
+    # Kalau yang terdeteksi hanya index excel_mode (0..1), ubah ke persen.
+    if "vehicle_pct" not in seg and "vehicle" not in seg and v <= 1.0:
+        return v * 100.0
+    return v
+
+
+def _simple_image_prompt(target: dict) -> str:
+    """Prompt gambar SESEMPEL MUNGKIN dari angka target UVI/PVI/persen.
+
+    Satu baris bahasa Inggris: hanya menyebut elemen yang perlu diubah.
+    """
+    seg = _seg_view(target)
+
+    veg = _pct_or_index(seg, "vegetation_pct", "vegetation", "green_coverage_pct") or 0.0
+    sky = _pct_or_index(seg, "sky_pct", "sky", "sky_visibility_pct") or 0.0
+    sw = _pct_or_index(seg, "sidewalk_pct", "sidewalk") or 0.0
+    veh = _veh_pct(seg) or 0.0
+    bld = _pct_or_index(seg, "building_pct", "building", "building_coverage_pct") or 0.0
+
+    ph = ["Redesign this street"]
+    if veg < 20:
+        ph.append("add more trees and greenery")
+    if sky < 25:
+        ph.append("open up the sky view")
+    if sw < 12:
+        ph.append("widen the pedestrian sidewalk")
+    if veh > 15:
+        ph.append("reduce vehicle dominance")
+    if bld > 40:
+        ph.append("provide more building setbacks")
+    if len(ph) == 1:  # pastikan selalu ada aksi
+        ph.append("improve the overall street environment")
+    ph.append("keeping the same point of view and composition, photorealistic")
+    return ", ".join(ph) + "."
+
+
+def _simple_suggestions(target: dict) -> list:
+    """Saran = kalimat bebas (tanpa prioritas), diturunkan dari angka target.
+
+    Bukan LLM: murni template dari angka — deterministik, biaya nol, dan tidak
+    mungkin mengarang angka. Threshold diambil dari standar praktis.
+    """
+    seg = _seg_view(target)
+    perc = target.get("perception_prediction") if isinstance(target, dict) else None
+    perc = perc if isinstance(perc, dict) else {}
+
+    veg = _pct_or_index(seg, "vegetation_pct", "vegetation", "green_coverage_pct")
+    sky = _pct_or_index(seg, "sky_pct", "sky", "sky_visibility_pct")
+    sw = _pct_or_index(seg, "sidewalk_pct", "sidewalk")
+    veh = _veh_pct(seg)
+    bld = _pct_or_index(seg, "building_pct", "building", "building_coverage_pct")
+    walk = _num(seg, "walkability_ratio")
+    uvi = _num(perc, "uvi_score")
+
+    sents = []
+    if veg is not None and veg < 25:
+        sents.append(
+            f"Tingkatkan tutupan vegetasi dari {veg:.1f}% dengan menambah "
+            "pohon peneduh dan tanaman perdu di sepanjang koridor serta selasar bangunan.")
+    if sky is not None and sky < 25:
+        sents.append(
+            f"Buka pandangan langit dari {sky:.1f}% dengan merapikan kanopi pohon "
+            "dan meniadakan papan iklan yang menghalangi.")
+    if sw is not None and sw < 12:
+        sents.append(
+            f"Perlebar dan sambungkan trotoar (saat ini {sw:.1f}% dari komposisi) "
+            "agar aman dan nyaman bagi pejalan kaki.")
+    if walk is not None and walk < 0.15:
+        sents.append(
+            f"Rasio pejalan kaki terhadap badan jalan hanya {walk:.2f} "
+            "(ideal > 0.25). Alihkan sebagian ruang jalan menjadi trotoar "
+            "yang menerus dan bebas hambatan.")
+    if veh is not None and veh > 15:
+        sents.append(
+            f"Kurangi dominasi kendaraan ({veh:.1f}%) dengan manajemen parkir "
+            "dan pembatasan lalu lintas di kawasan pejalan.")
+    if bld is not None and bld > 40:
+        sents.append(
+            f"Atur jarak antar bangunan ({bld:.1f}%) agar sirkulasi udara dan "
+            "jarak pandang lebih terbuka.")
+    if uvi is not None and uvi < 0.7:
+        sents.append(
+            f"Nilai UVI saat ini {uvi:.2f} (skala 0..1) — rendah. Terapkan "
+            "langkah di atas secara bersama untuk menaikkannya.")
+    if not sents:
+        sents.append(
+            "Lakukan verifikasi lapangan dan bandingkan dengan foto sebelum menentukan "
+            "prioritas perbaikan.")
+    return sents[:4]
+
+
+def _target_stem(photo_path: Optional[str]) -> str:
+    """Stem nama file hasil dari photo_path bila ada, else 'gen'."""
+    if photo_path:
+        s = Path(photo_path).stem
+        if s:
+            return s[:60]
+    return "gen"
+
+
+def _raw_image_url(photo_path: Optional[str]) -> Optional[str]:
+    """URL publik untuk foto mentah, hanya bila file ada DI DALAM uploads/.
+
+    `/uploads/{rel_path}` hanya menyerve isi folder uploads/, jadi file di
+    luar itu (mis. data/extracted/) tidak punya URL -> kembalikan None
+    daripada memberi URL yang 404.
+    """
+    if not photo_path:
+        return None
+    rel = Path(photo_path)
+    if not rel.is_absolute():
+        rel = PROJECT_ROOT / rel
+    if not rel.is_file():
+        return None
+    try:
+        return f"/uploads/{rel.resolve().relative_to((PROJECT_ROOT / 'uploads').resolve()).as_posix()}"
+    except ValueError:
+        return None
+
+
+def _load_target_json(result: str) -> dict:
+    """Terima isi JSON hasil /ai/process ATAU path file result_*.json.
+
+    ``result`` diawali '{' -> JSON inline; selain itu dianggap path relatif ke
+    repo root (file yang ditulis /ai/process ke uploads/results/).
+    """
+    strip = (result or "").strip()
+    if not strip:
+        raise HTTPException(status_code=400, detail="param 'result' wajib diisi")
+    if strip.startswith("{"):
+        try:
+            val = json.loads(strip)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400,
+                                detail=f"'result' bukan JSON valid: {exc}")
+    else:
+        p = Path(strip)
+        if not p.is_absolute():
+            p = PROJECT_ROOT / p
+        if not p.is_file():
+            raise HTTPException(status_code=404,
+                                detail=f"file result tidak ditemukan: {p}")
+        try:
+            val = json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400,
+                                detail=f"file result bukan JSON valid: {exc}")
+    if not isinstance(val, dict):
+        raise HTTPException(status_code=400, detail="'result' harus objek JSON")
+    return val
+
+
+async def _openai_generate_image(*, prompt: str, model: str, size: str,
+                                 count: int) -> dict:
+    """Panggil OpenAI Images API (gpt-image-1), minta base64.
+
+    Kembalikan {"items": [{"b64_json":..., "revised_prompt":...}], ...}.
+    """
+    key = settings.openai_api_key.strip()
+    if not key:
+        raise HTTPException(status_code=503,
+                            detail="OPENAI_API_KEY kosong - set di .env lalu restart")
+    url = "https://api.openai.com/v1/images/generations"
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    # CATATAN: gpt-image-1 SELALU mengembalikan b64_json dan MENOLAK parameter
+    # `response_format` (400 unknown_parameter). Jangan tambahkan lagi.
+    payload = {"model": model, "prompt": prompt, "n": count, "size": size}
+    try:
+        async with httpx.AsyncClient(timeout=settings.openai_image_timeout_s) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502,
+                            detail=f"gagal hubungi OpenAI Images API: {exc}")
+    if resp.status_code != 200:
+        detail = resp.text[:500]
+        raise HTTPException(status_code=resp.status_code,
+                            detail=f"OpenAI Images API {resp.status_code}: {detail}")
+    data = resp.json()
+    items = data.get("data") or []
+    if not items:
+        raise HTTPException(status_code=502,
+                            detail="OpenAI Images API balasan tanpa data")
+    out = []
+    for it in items:
+        b64 = it.get("b64_json")
+        if not b64:
+            raise HTTPException(status_code=502,
+                                detail="OpenAI Images API balasan tanpa b64_json")
+        out.append({"b64_json": b64, "revised_prompt": it.get("revised_prompt", prompt)})
+    return {"items": out, "model": data.get("model", model)}
+
+
+def _save_generated(b64: str, stem: str) -> Path:
+    """Simpan hasil base64 ke uploads/generated/, kembalikan Path."""
+    gen_dir = PROJECT_ROOT / "uploads" / "generated"
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    path = gen_dir / f"img_{stem}_{int(time.time() * 1000)}.png"
+    path.write_bytes(base64.b64decode(b64))
+    return path
+
+
+@router.post("/generate", summary="Baca hasil /ai/process -> generate ulang foto (OpenAI Images) + saran")
+async def llm_generate(
+    result: str = Form(..., description="JSON hasil /ai/process ATAU path file result_*.json (relatif ke repo root)"),
+    photo_path: Optional[str] = Form(None, description="Path gambar raw di server (opsional, untuk raw_image_url)"),
+    prompt: Optional[str] = Form(None, description="Override prompt gambar (opsional)"),
+    model: Optional[str] = Form(None, description="Model OpenAI images (default gpt-image-1)"),
+    size: Optional[str] = Form(None, description="1024x1024 | 1536x1024 | 1024x1536"),
+    count: Optional[str] = Form(None, description="Jumlah gambar, 1..4 (default 1)"),
+):
+    """Alur satu endpoint "AI photo generator":
+
+    1. ``result`` = keluaran POST /ai/process (JSON inline ATAU path file
+       ``uploads/results/result_*.json``) -> dibaca variabel UVI/PVI &
+       persentase (``perception_prediction``, ``segmentation_results``).
+    2. prompt gambar disusun SESEMPEL MUNGKIN dari angka target.
+    3. OpenAI Images API (gpt-image-1) -> PNG disimpan di ``uploads/generated/``.
+    4. saran = kalimat bebas (tanpa prioritas) dari angka, bukan LLM => gratis &
+       deterministik.
+    5. Response berisi ``generated_image_url`` + ``raw_image_url`` + suggestions
+       supaya bisa ditampilkan berdampingan (raw | saran | hasil AI).
+    """
+    target = _load_target_json(result)
+
+    chosen_model = (model or "").strip() or settings.openai_image_model
+    chosen_size = (size or "").strip() or settings.openai_image_size
+    if chosen_size not in _OPENAI_IMAGE_SIZES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"size harus salah satu: {', '.join(_OPENAI_IMAGE_SIZES)}",
+        )
+    try:
+        count_n = int(count) if count else 1
+    except ValueError:
+        raise HTTPException(status_code=400, detail="count harus bilangan bulat")
+    if not 1 <= count_n <= 4:
+        raise HTTPException(status_code=400, detail="count harus 1..4")
+
+    image_prompt = (prompt or "").strip() or _simple_image_prompt(target)
+    stem = _target_stem(photo_path)
+    t0 = time.time()
+    gen = await _openai_generate_image(prompt=image_prompt, model=chosen_model,
+                                       size=chosen_size, count=count_n)
+    saved = []
+    for i, item in enumerate(gen["items"]):
+        p = _save_generated(item["b64_json"], stem if count_n == 1 else f"{stem}_{i + 1}")
+        saved.append(f"/uploads/generated/{p.name}")
+    elapsed_ms = int((time.time() - t0) * 1000)
+
+    raw_image_url = _raw_image_url(photo_path)
+
+    return {
+        "generated_image_url": saved[0],
+        "generated_image_urls": saved,
+        "raw_image_url": raw_image_url,
+        "photo_path": photo_path,
+        "target": {
+            "perception_prediction": target.get("perception_prediction"),
+            "segmentation_results": target.get("segmentation_results"),
+        },
+        "suggestions": _simple_suggestions(target),
+        "prompt_image": image_prompt,
+        "revised_prompt": gen["items"][0]["revised_prompt"],
+        "image_model": chosen_model,
+        "size": chosen_size,
+        "count": count_n,
+        "elapsed_ms": elapsed_ms,
+        "usage": None,
     }
 
 @router.get("", include_in_schema=False)

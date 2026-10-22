@@ -200,14 +200,34 @@ class ProcessRequest(BaseModel):
     is_offline_sync: bool = False
 
 
-def save_upload(file: UploadFile) -> Path:
+def save_upload(file: UploadFile, subdir: Optional[str] = None) -> Path:
+    """Simpan file upload ke uploads/ (atau uploads/<subdir>/).
+
+    ``subdir`` dipakai untuk mengarsipkan file ORIGINAL (foto & video) supaya
+    tidak tercampur dengan file hasil (mask, segmentasi, video output).
+    """
+    target_dir = uploads_dir / subdir if subdir else uploads_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(file.filename).stem
-    path = uploads_dir / f"{stem}_{uuid.uuid4()}{Path(file.filename).suffix}"
+    path = target_dir / f"{stem}_{uuid.uuid4()}{Path(file.filename).suffix}"
     file.file.seek(0)
     with open(path, "wb") as f:
         content = file.file.read()
         f.write(content)
     return path
+
+
+def _upload_url(path: Path) -> Optional[str]:
+    """URL publik untuk file yang berada DI DALAM uploads/.
+
+    File di luar uploads/ tidak punya URL (route /uploads/{path} hanya
+    menyerve isi folder itu) -> kembalikan None daripada URL yang 404.
+    """
+    try:
+        rel = path.resolve().relative_to(uploads_dir.resolve())
+    except ValueError:
+        return None
+    return f"/uploads/{rel.as_posix()}"
 
 def _ffmpeg_candidates() -> list:
     """Daftar binary ffmpeg yang mungkin dipakai, urut prioritas.
@@ -788,6 +808,7 @@ def post_process(path: Path) -> dict:
             "privacy_masked_url": f"/uploads/masks/{mask_path.name}",
             "segmentation_url": f"/uploads/segmentation/{seg_path.name}",
             "segmentation_overlay_url": f"/uploads/segmentation/{overlay_path.name}",
+            "original_image_url": _upload_url(path),
             **unified,
         }
 
@@ -930,6 +951,7 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
             "filename": video_path.name,
             "video_url": video_url,
             "video_overlay_url": video_url,
+            "original_video_url": _upload_url(video_path),
             "video_codec": video_codec,
             "video_playable_in_browser": _is_h264(video_codec),
             "total_frames": n_frames_processed,
@@ -982,7 +1004,7 @@ async def process_video(
     _cleanup_old_tasks()
 
     task_id = str(uuid.uuid4())[:8]
-    path = await asyncio.to_thread(save_upload, file)
+    path = await asyncio.to_thread(save_upload, file, "originals")
 
     with video_tasks_lock:
         video_tasks[task_id] = {
@@ -1111,7 +1133,7 @@ async def process_photo(
     start = time.time()
     logger.info("📥 Foto masuk: %s (size: %s, photo_id: %s)", file.filename, file.size, photo_id)
     try:
-        path = save_upload(file)
+        path = save_upload(file, subdir="originals")
         logger.info("💾 Foto disimpan: %s", path)
 
         logger.info("⚙️  Memproses: %s ...", file.filename)
@@ -1124,7 +1146,6 @@ async def process_photo(
         if photo_id:
             background_tasks.add_task(_post_result_to_backend, photo_id, result)
 
-        path.unlink(missing_ok=True)
         return JSONResponse(result)
     except Exception as e:
         elapsed = (time.time() - start) * 1000

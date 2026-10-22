@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     nine_router_fallbacks: str = "x/gpt-6-luna,lo/deepseek-v4.1-flash,gcli/grok-4.6"
     nine_router_timeout_s: int = 120
 
+    # OpenAI Images API - dipakai endpoint POST /llm/generate.
+    # Key `sk-proj-...` disimpan di .env (gitignored). Model gambar resmi OpenAI
+    # adalah gpt-image-1 (regresi terhadap DALL-E); size valid:
+    # 1024x1024 | 1536x1024 | 1024x1536.
+    openai_api_key: str = ""
+    openai_image_model: str = "gpt-image-1"
+    openai_image_size: str = "1024x1024"
+    openai_image_timeout_s: int = 120
+
     def resolve_device(self) -> str:
         """Kembalikan 'cuda' atau 'cpu' berdasarkan setting & ketersediaan."""
         if self.uvip_device == "cpu":
