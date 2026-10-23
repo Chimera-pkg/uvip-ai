@@ -9,7 +9,8 @@ Flow:
 2. Process setiap frame (segmentation)
 3. Generate overlay visualization
 4. Combine frames jadi video output
-5. Save ke uploads/videos/ (permanent, bukan /tmp)
+5. Save ke uploads/videos/ (flat) - hasil API video memakai
+   `_encode_h264_frames` (ffmpeg) di main.py, bukan VideoWriter di sini.
 """
 from __future__ import annotations
 
@@ -54,10 +55,10 @@ class VideoProcessor:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.temp_frames_dir = self.output_dir / "temp_frames"
-        self.temp_frames_dir.mkdir(parents=True, exist_ok=True)
 
     def extract_frames(self, video_path: str, fps: float = None) -> list[Path]:
         """Extract frames dari video. Jika fps=None, extract semua frame."""
+        self.temp_frames_dir.mkdir(parents=True, exist_ok=True)
         video_path = Path(video_path)
         cap = cv2.VideoCapture(str(video_path))
 

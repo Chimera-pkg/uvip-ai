@@ -63,6 +63,10 @@ class SegformerB5:
         "signage": "signage",     # Traffic signs, infrastructure
         "pole": "street_furniture",
         "traffic_light": "signage",
+        # id2label asli model menulis "traffic sign" -> dinormalisasi menjadi
+        # "traffic_sign". Tanpa baris ini kelas itu jatuh ke nama mentah dan
+        # signage selalu 0 (sign/traffic light tidak pernah masuk indeks).
+        "traffic_sign": "signage",
         "terrain": "other",
         # Heritage detection requires additional model/fine-tuning
         # Currently placeholder for future enhancement
@@ -72,6 +76,10 @@ class SegformerB5:
         "vegetation", "building", "road", "sidewalk", "sky",
         "signage", "vehicle", "pedestrian", "street_furniture", "heritage"
     ]
+
+    # Kuantisasi grayscale untuk GLCM. 32 level cukup agar homogeneity stabil
+    # dan matriks 32x32 tetap cepat dihitung per request (~1 ms).
+    TEXTURE_LEVELS = 32
 
     # Excel composite indices mapping
     EXCEL_INDICATORS = [
@@ -158,6 +166,17 @@ class SegformerB5:
         self._load()
         return self._processor
 
+    def free_memory(self) -> None:
+        """Lepas model & bersihkan cache VRAM (dipakai mode hemat VRAM).
+
+        Dipanggil ``runpod_serverless``, ``DatasetBuilder``, dan contoh
+        ``excel_mode_usage`` — tanpa metode ini ketiganya AttributeError.
+        """
+        self._model = None
+        self._processor = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     @torch.inference_mode()
     def infer(self, image: Image.Image | np.ndarray | str, max_resolution: int = 512, excel_mode: bool = False) -> dict[str, Any]:
         """Infer segmentasi → return seg_map + metrics (Excel-aligned or original).
@@ -214,9 +233,17 @@ class SegformerB5:
                     pct_by_class[category] = 0
                 pct_by_class[category] += float(pct_val)
         
-        # Calculate metrics based on mode
+        # Calculate metrics based on mode.
+        # excel_mode butuh seg_map + piksel RGB: indeks penelitian memakai
+        # komponen bentuk (solidity), warna (mean RGB bangunan) dan tekstur
+        # (GLCM homogeneity) di samping rasio piksel.
         if excel_mode:
-            metrics = self._compute_excel_metrics(pct_by_class, seg_map)
+            metrics = self._compute_excel_metrics(
+                pct_by_class,
+                seg_map,
+                rgb=np.array(img, dtype=np.uint8, copy=True),
+                masks=self._category_masks(seg_map),
+            )
         else:
             metrics = self._compute_metrics(pct_by_class, seg_map)
         return {"seg_map": seg_map, "metrics": metrics, "pct_by_class": pct_by_class}
@@ -243,108 +270,199 @@ class SegformerB5:
             "sky_visibility_pct": round(sky, 4),
         }
 
-    def _compute_excel_metrics(self, pct_by_class: dict, seg_map: np.ndarray) -> dict:
-        """Compute 8 Excel-aligned composite indices.
-        
-        Features:
-        - Filters out moving objects (pedestrian, vehicles) from static analysis
-        - Separates road vs sidewalk for ground accessibility
-        - Calculates heritage dominance (placeholder for future implementation)
-        - Returns normalized [0, 1] indices matching Excel format
-        
-        Args:
-            pct_by_class: Raw percentages by category
-            seg_map: Segmentation map (for mask extraction if needed)
-            
-        Returns:
-            Dictionary with 8 composite indices
+    @staticmethod
+    def _largest_contour(mask: np.ndarray):
+        """Kontur terbesar dari mask boolean (None bila kosong)."""
+        contours, _ = cv2.findContours(
+            mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        if not contours:
+            return None
+        return max(contours, key=cv2.contourArea)
+
+    @classmethod
+    def _shape_stats(cls, mask: np.ndarray, total_px: int) -> tuple[float, float]:
+        """(luas kontur terbesar / total piksel, solidity) untuk satu mask."""
+        if total_px <= 0 or mask is None or not mask.any():
+            return 0.0, 0.0
+        contour = cls._largest_contour(mask)
+        if contour is None:
+            return 0.0, 0.0
+        area = float(cv2.contourArea(contour))
+        hull_area = float(cv2.contourArea(cv2.convexHull(contour)))
+        return area / total_px, (area / hull_area if hull_area > 0 else 0.0)
+
+    @classmethod
+    def _glcm_homogeneity(cls, gray: np.ndarray, mask: np.ndarray) -> float:
+        """Homogeneity GLCM (jarak 1, arah horizontal) DI DALAM mask objek."""
+        ys, xs = np.nonzero(mask)
+        if ys.size < 64:
+            return 0.0
+        y0, y1 = int(ys.min()), int(ys.max()) + 1
+        x0, x1 = int(xs.min()), int(xs.max()) + 1
+        sub = gray[y0:y1, x0:x1]
+        inner = mask[y0:y1, x0:x1]
+        levels = cls.TEXTURE_LEVELS
+        quant = (sub.astype(np.uint16) * levels) // 256
+        # Hanya pasangan yang KEDUA pikselnya di dalam objek.
+        pair = inner[:, :-1] & inner[:, 1:]
+        left = quant[:, :-1][pair]
+        right = quant[:, 1:][pair]
+        if left.size < 64:
+            return 0.0
+        counts = np.bincount(
+            left.astype(np.int64) * levels + right, minlength=levels * levels
+        ).astype(np.float64)
+        total = counts.sum()
+        if total <= 0:
+            return 0.0
+        prob = (counts / total).reshape(levels, levels)
+        idx = np.arange(levels)
+        weight = 1.0 / (1.0 + np.abs(idx[:, None] - idx[None, :]))
+        return float((prob * weight).sum())
+
+    @staticmethod
+    def _mean_rgb(rgb: np.ndarray | None, mask: np.ndarray | None) -> float:
+        """Rata-rata kanal piksel di dalam mask, dinormalisasi ke 0..1."""
+        if rgb is None or mask is None or not mask.any():
+            return 0.0
+        pixels = rgb[mask]
+        return float(pixels.mean()) / 255.0 if pixels.size else 0.0
+
+    def _category_masks(self, seg_map: np.ndarray) -> dict[str, np.ndarray]:
+        """Mask boolean per kategori analitis (road, building, vegetation, ...)."""
+        groups: dict[str, list[int]] = {}
+        id2label = getattr(self.model.config, "id2label", None) or {}
+        for class_id, label in id2label.items():
+            name = str(label).lower().replace(" ", "_")
+            groups.setdefault(self.CLASS_MAP.get(name, name), []).append(int(class_id))
+        return {cat: np.isin(seg_map, ids) for cat, ids in groups.items()}
+
+    def _compute_excel_metrics(self, pct_by_class: dict, seg_map: np.ndarray,
+                               rgb: np.ndarray | None = None,
+                               masks: dict[str, np.ndarray] | None = None) -> dict:
+        """8 indeks komposit 0..1 sesuai notebook penelitian PVI.
+
+        Rumus (bagian "11. COMPOSITE VISUAL INDICES" di
+        ``Photogenic_Value_Index_Multi_Foto.ipynb``)::
+
+            BVI = 0.50*building_ratio + 0.30*building_area + 0.20*building_solidity
+            VCI = 0.70*vegetation_ratio + 0.30*vegetation_homogeneity
+            SOI = 0.80*sky_ratio + 0.20*sky_homogeneity
+            GAI = 0.70*ground_ratio + 0.30*ground_solidity
+            HAI = human_ratio
+            VII = vehicle_ratio                       (4w + 2w)
+            TII = traffic_sign_ratio
+            HDI = 0.40*BVI + 0.25*building_solidity
+                  + 0.20*building_mean_rgb + 0.15*building_homogeneity
+
+        Dua penyimpangan yang disengaja dari notebook, karena versi notebook
+        tidak bisa dipakai apa adanya di runtime:
+
+        1. GLCM dihitung pada piksel DI DALAM mask objek saja. Notebook
+           menyalin seluruh kanvas lalu mengisi background dengan 0, sehingga
+           pasangan piksel (0,0) mendominasi matriks dan homogeneity hampir
+           selalu ~0.95 untuk semua foto - komponen itu tidak punya daya beda.
+        2. ``building_area`` = luas kontur terbesar / total piksel (definisi
+           notebook), bukan jumlah seluruh piksel kelas bangunan.
+
+        ``masks``/``rgb`` opsional. Tanpa keduanya komponen bentuk, warna dan
+        tekstur = 0 dan indeks murni rasio piksel (dipakai jalur video).
         """
-        # Extract moving object percentages
-        pedestrian_pct = pct_by_class.get("pedestrian", 0)
-        vehicle_pct = pct_by_class.get("vehicle", 0)
-        
-        # Calculate moving object percentage (for filtering consideration)
-        moving_total = pedestrian_pct + vehicle_pct
-        
-        # Static objects only (non-moving)
-        static_categories = ["building", "vegetation", "sky", "road", "sidewalk", 
-                            "signage", "street_furniture", "heritage"]
-        static_sum = sum(pct_by_class.get(cat, 0) for cat in static_categories)
-        
-        # Re-normalize to exclude moving objects from main composition
-        # This ensures focus on static structures as per requirement
-        scale_factor = 100.0 / static_sum if static_sum > 0 else 1.0
-        
-        # Calculate normalized percentages (moving objects filtered out)
-        normalized = {}
-        for cat in static_categories:
-            raw_pct = pct_by_class.get(cat, 0)
-            normalized[cat] = raw_pct * scale_factor / 100  # Convert to [0, 1] range
-        
-        # Also keep raw percentages for reference
-        raw_normalized = {cat: pct_by_class.get(cat, 0) for cat in static_categories}
-        
-        # Excel Composite Indices Calculation
-        # Based on pattern from Excel: value → normalized index [0, 1]
-        
+        ratio = {
+            k: min(max(float(v), 0.0) / 100.0, 1.0)
+            for k, v in pct_by_class.items()
+        }
+        masks = masks or {}
+        total_px = int(seg_map.size)
+        gray = (
+            cv2.cvtColor(np.asarray(rgb, dtype=np.uint8), cv2.COLOR_RGB2GRAY)
+            if rgb is not None else None
+        )
+        can_shape = gray is not None
+
+        def shape(cat: str) -> tuple[float, float]:
+            mask = masks.get(cat)
+            if not can_shape or mask is None:
+                return 0.0, 0.0
+            return self._shape_stats(mask, total_px)
+
+        def homogeneity(cat: str) -> float:
+            mask = masks.get(cat)
+            if not can_shape or mask is None:
+                return 0.0
+            return self._glcm_homogeneity(gray, mask)
+
         # 1. Building Visibility Index
-        building_pct = raw_normalized.get("building", 0)
-        building_visibility_idx = min(building_pct / 100, 1.0)  # Normalize to [0, 1]
-        
-        # 2. Vegetation Coverage Index  
-        vegetation_pct = raw_normalized.get("vegetation", 0)
-        vegetation_coverage_idx = min(vegetation_pct / 100, 1.0)
-        
+        building_ratio = ratio.get("building", 0.0)
+        building_area, building_solidity = shape("building")
+        bvi = (0.50 * building_ratio + 0.30 * building_area
+               + 0.20 * building_solidity)
+
+        # 2. Vegetation Coverage Index
+        vegetation_ratio = ratio.get("vegetation", 0.0)
+        vci = 0.70 * vegetation_ratio + 0.30 * homogeneity("vegetation")
+
         # 3. Sky Openness Index
-        sky_pct = raw_normalized.get("sky", 0)
-        sky_openness_idx = min(sky_pct / 100, 1.0)
-        
-        # 4. Ground Accessibility Index (Road + Sidewalk combined, both are walkable ground)
-        road_pct = raw_normalized.get("road", 0)
-        sidewalk_pct = raw_normalized.get("sidewalk", 0)
-        ground_accessibility_idx = min((road_pct + sidewalk_pct) / 100, 1.0)
-        
-        # 5. Human Activity Index (keep as-is, low weight indicator)
-        human_activity_idx = raw_normalized.get("pedestrian", 0) * 0.01  # Scale down
-        
-        # 6. Vehicle Intensity Index (keep as-is, separate from static analysis)
-        vehicle_4w_pct = pct_by_class.get("vehicle_4w", 0)
-        vehicle_2w_pct = pct_by_class.get("vehicle_2w", 0)
-        vehicle_intensity_idx = (vehicle_4w_pct + vehicle_2w_pct) * 0.01
-        
-        # Note: Cityscapes doesn't distinguish 4w vs 2w vehicles
-        # Using ratio estimation based on typical urban distribution
-        estimated_ratio = 0.5  # Assume 50% each for now
-        vehicle_intensity_idx = vehicle_pct * (estimated_ratio + 0.01)
-        
-        # 7. Traffic Infrastructure Index (signage + street furniture)
-        signage_pct = raw_normalized.get("signage", 0)
-        street_furniture_pct = raw_normalized.get("street_furniture", 0)
-        traffic_infrastructure_idx = min((signage_pct + street_furniture_pct) / 100, 1.0)
-        
-        # 8. Heritage Dominance Index (NEW - placeholder for future enhancement)
-        # Requires additional CNN training on heritage building dataset
-        heritage_pct = raw_normalized.get("heritage", 0)
-        total_building = building_pct + heritage_pct
-        
-        if total_building > 0:
-            heritage_dominance_idx = heritage_pct / total_building
-        else:
-            heritage_dominance_idx = 0.0
-        
+        sky_ratio = ratio.get("sky", 0.0)
+        soi = 0.80 * sky_ratio + 0.20 * homogeneity("sky")
+
+        # 4. Ground Accessibility Index (road + sidewalk = "ground")
+        ground_ratio = min(ratio.get("road", 0.0) + ratio.get("sidewalk", 0.0), 1.0)
+        ground_mask = None
+        if masks:
+            parts = [masks[c] for c in ("road", "sidewalk") if c in masks]
+            if parts:
+                ground_mask = parts[0] if len(parts) == 1 else np.logical_or(*parts)
+        ground_solidity = 0.0
+        if can_shape and ground_mask is not None:
+            _, ground_solidity = self._shape_stats(ground_mask, total_px)
+        gai = 0.70 * ground_ratio + 0.30 * ground_solidity
+
+        # 5. Human Activity Index - DULU selalu 0 karena dibaca dari dict yang
+        # hanya berisi kelas statis (pedestrian tidak pernah ada di sana).
+        hai = ratio.get("pedestrian", 0.0)
+
+        # 6. Vehicle Intensity Index - DULU = vehicle_pct * 0.51 sehingga bisa
+        # bernilai 14x lipat batas atas indeks (0..1).
+        vii = ratio.get("vehicle", 0.0)
+
+        # 7. Traffic Infrastructure Index (traffic sign + traffic light + pole)
+        tii = min(ratio.get("signage", 0.0) + ratio.get("street_furniture", 0.0), 1.0)
+
+        # 8. Heritage Dominance Index
+        building_mean_rgb = self._mean_rgb(rgb, masks.get("building"))
+        hdi = (0.40 * bvi + 0.25 * building_solidity
+               + 0.20 * building_mean_rgb + 0.15 * homogeneity("building"))
+
+        static_categories = ["building", "vegetation", "sky", "road", "sidewalk",
+                             "signage", "street_furniture", "heritage"]
+        static_sum = sum(pct_by_class.get(cat, 0) for cat in static_categories)
+        moving_total = pct_by_class.get("pedestrian", 0) + pct_by_class.get("vehicle", 0)
+
         return {
-            "building_visibility_index": round(building_visibility_idx, 4),
-            "vegetation_coverage_index": round(vegetation_coverage_idx, 4),
-            "sky_openness_index": round(sky_openness_idx, 4),
-            "ground_accessibility_index": round(ground_accessibility_idx, 4),
-            "human_activity_index": round(human_activity_idx, 4),
-            "vehicle_intensity_index": round(vehicle_intensity_idx, 4),
-            "traffic_infrastructure_index": round(traffic_infrastructure_idx, 4),
-            "heritage_dominance_index": round(heritage_dominance_idx, 4),
-            # Additional metadata
-            "_static_normalization_factor": round(scale_factor, 4),
+            "building_visibility_index": round(bvi, 4),
+            "vegetation_coverage_index": round(vci, 4),
+            "sky_openness_index": round(soi, 4),
+            "ground_accessibility_index": round(gai, 4),
+            "human_activity_index": round(hai, 4),
+            "vehicle_intensity_index": round(vii, 4),
+            "traffic_infrastructure_index": round(tii, 4),
+            "heritage_dominance_index": round(hdi, 4),
+            # Metadata audit (tidak dipakai scorer, hanya untuk penelusuran).
+            "_static_normalization_factor": round(
+                100.0 / static_sum if static_sum > 0 else 1.0, 4),
             "_moving_object_percentage": round(moving_total, 4),
-            "_raw_percentages": {k: round(v, 4) for k, v in raw_normalized.items()},
+            "_components": {
+                "building_area": round(building_area, 4),
+                "building_solidity": round(building_solidity, 4),
+                "ground_solidity": round(ground_solidity, 4),
+                "building_mean_rgb": round(building_mean_rgb, 4),
+            },
+            "_raw_percentages": {
+                cat: round(pct_by_class.get(cat, 0), 4)
+                for cat in static_categories
+            },
         }
 
     def _calculate_moving_object_masks(self, seg_map: np.ndarray) -> dict:

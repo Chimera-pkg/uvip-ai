@@ -36,8 +36,24 @@ logger = logging.getLogger("uvip_ai")
 
 # PVI scorer: 8 indeks penelitian -> 4 skor perception_prediction.
 from uvip_ai.scoring.pvi_scorer import (  # noqa: E402
+    INDEX_KEYS,
     compute_scores_from_metrics,
     indices_from_pct_by_class,
+)
+from uvip_ai.utils.storage import (  # noqa: E402
+    MASKS_DIR,
+    RESULTS_DIR,
+    SEGMENTATION_DIR,
+    TEMP_DIR,
+    UPLOADS_DIR,
+    VIDEOS_DIR,
+    guess_suffix,
+    output_path,
+    rel_path,
+    save_upload,
+    timestamp_ms,
+    upload_url as url_for,
+    write_json_atomic,
 )
 
 # ─── Background Task Storage (video processing) ─────────────────────────────
@@ -91,6 +107,10 @@ app = fastapi.FastAPI(title="UVIP-AI API", version="0.1.0")
 # sekarang menempel di API utama supaya ikut tampil di /docs. Prefix /llm.
 from uvip_ai.llm import router as llm_router  # noqa: E402
 from uvip_ai.llm.cors import LLMCorsMiddleware  # noqa: E402
+# `from uvip_ai.llm import router` mengambil objek APIRouter (lihat
+# llm/__init__.py), jadi fungsi helper diambil dari modulnya langsung.
+from uvip_ai.llm.router import advise_photo as llm_advise  # noqa: E402
+from uvip_ai.llm.router import result_context as llm_result_context  # noqa: E402
 
 app.include_router(llm_router)
 
@@ -100,9 +120,9 @@ app.add_middleware(LLMCorsMiddleware, prefix="/llm")
 
 # Serve static files dari uploads/ — ABSOLUTE ke repo root.
 # Dulu relatif (Path("uploads")) sehingga restart dari cwd berbeda bikin file
-# "hilang" (tertulis di folder lain, diserve dari folder lain). Sekarang satu lokasi pasti.
-REPO_ROOT = Path(__file__).resolve().parents[3]
-uploads_dir = REPO_ROOT / "uploads"
+# "hilang" (tertulis di folder lain, diserve dari folder lain). Sekarang satu
+# lokasi pasti untuk semua modul (lihat utils/storage.py).
+uploads_dir = UPLOADS_DIR
 uploads_dir.mkdir(parents=True, exist_ok=True)
 
 
@@ -137,7 +157,7 @@ async def serve_upload(rel_path: str):
 
 
 # Build stamp - bukti versi kode yang benar-benar jalan (lihat GET /health)
-BUILD_STAMP = "jpg-h264-v17-gpu-device-fix"
+BUILD_STAMP = "legacy-names-v20"
 
 # Binary ffmpeg yang sudah terbukti bisa encode (diisi oleh _encode_h264_frames)
 _ffmpeg_exe_cache: Optional[str] = None
@@ -200,34 +220,6 @@ class ProcessRequest(BaseModel):
     is_offline_sync: bool = False
 
 
-def save_upload(file: UploadFile, subdir: Optional[str] = None) -> Path:
-    """Simpan file upload ke uploads/ (atau uploads/<subdir>/).
-
-    ``subdir`` dipakai untuk mengarsipkan file ORIGINAL (foto & video) supaya
-    tidak tercampur dengan file hasil (mask, segmentasi, video output).
-    """
-    target_dir = uploads_dir / subdir if subdir else uploads_dir
-    target_dir.mkdir(parents=True, exist_ok=True)
-    stem = Path(file.filename).stem
-    path = target_dir / f"{stem}_{uuid.uuid4()}{Path(file.filename).suffix}"
-    file.file.seek(0)
-    with open(path, "wb") as f:
-        content = file.file.read()
-        f.write(content)
-    return path
-
-
-def _upload_url(path: Path) -> Optional[str]:
-    """URL publik untuk file yang berada DI DALAM uploads/.
-
-    File di luar uploads/ tidak punya URL (route /uploads/{path} hanya
-    menyerve isi folder itu) -> kembalikan None daripada URL yang 404.
-    """
-    try:
-        rel = path.resolve().relative_to(uploads_dir.resolve())
-    except ValueError:
-        return None
-    return f"/uploads/{rel.as_posix()}"
 
 def _ffmpeg_candidates() -> list:
     """Daftar binary ffmpeg yang mungkin dipakai, urut prioritas.
@@ -706,6 +698,16 @@ def _verify_playable(path: Path) -> tuple[int, int]:
         raise RuntimeError(f"video tidak bisa di-decode: {path.name}")
     return frame.shape[1], frame.shape[0]
 
+def _is_excel_metrics(metrics: Optional[dict]) -> bool:
+    """True bila ``metrics`` memuat 8 indeks Excel.
+
+    Jalur foto mengirim hasil ``infer(excel_mode=True)``. Jalur video mengirim
+    ``None`` - dan SEBELUMNYA bisa juga mengirim 5 metrik urban, yang membuat
+    semua indeks terbaca 0 -> seluruh skor jatuh ke batas bawah 1.0.
+    """
+    return bool(metrics) and all(key in metrics for key in INDEX_KEYS)
+
+
 def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int,
                           metrics: Optional[dict] = None) -> dict:
     """Format metrics unified — sama persis untuk foto & video.
@@ -714,15 +716,16 @@ def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int
     mentok 10). Skor diambil dari PVI scorer berbasis 8 indeks penelitian.
 
     ``metrics`` = hasil ``seg.infer(excel_mode=True)["metrics"]`` (jalur FOTO).
-    Bila tidak tersedia (jalur VIDEO, yang memanggil infer tanpa excel_mode),
-    indeks diturunkan dari ``pct_by_class`` lewat fallback yang identik.
+    Bila tidak memuat 8 indeks (jalur VIDEO), indeks diturunkan dari
+    ``pct_by_class`` lewat fallback rasio di ``pvi_scorer``.
     """
     green_pct = pct_by_class.get('vegetation', 0) + pct_by_class.get('tree', 0)
     building_pct = pct_by_class.get('building', 0)
     road_pct = pct_by_class.get('road', 0)
     sky_pct = pct_by_class.get('sky', 0)
     sidewalk_pct = pct_by_class.get('sidewalk', 0)
-    indices = metrics if metrics else indices_from_pct_by_class(pct_by_class)
+    excel = _is_excel_metrics(metrics)
+    indices = metrics if excel else indices_from_pct_by_class(pct_by_class)
     scores = compute_scores_from_metrics(indices)
     return {
         "segmentation_results": {
@@ -735,6 +738,7 @@ def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int
         "perception_prediction": scores,
         "shap_values": [],
         "metrics_source": {
+            "indices_source": "segformer_excel" if excel else "pct_ratio_fallback",
             "pct_by_class": {k.replace(" ", "_"): round(v, 2) for k, v in pct_by_class.items()},
             "seg_map_shape": list(seg_shape),
             "class_count": len(pct_by_class),
@@ -743,21 +747,38 @@ def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int
     }
 
 
-def post_process(path: Path) -> dict:
-    """Run full pipeline AI pada foto → return unified result with saved files."""
+def post_process(path: Path, title: str,
+                 latitude: Optional[float] = None,
+                 longitude: Optional[float] = None) -> dict:
+    """Run full pipeline AI pada foto -> return unified result with saved files.
+
+    Semua artefak ditulis FLAT dengan nama lama
+    ``<prefix>_<nama_upload>_<uuid4>_<epoch_ms>``::
+
+        uploads/segmentation/seg_<nama_upload>_<uuid4>_<epoch_ms>.jpg
+        uploads/segmentation/overlay_<nama_upload>_<uuid4>_<epoch_ms>.jpg
+        uploads/masks/mask_<nama_upload>_<uuid4>_<epoch_ms>.jpg
+        uploads/results/result_<nama_upload>_<uuid4>_<epoch_ms>.json
+
+    ``latitude``/``longitude`` = posisi kiriman klien (perangkat, saat upload).
+    Nilai ini HANYA dipakai bila file foto tidak punya GPS EXIF, dan ditandai
+    ``source="client_upload"`` supaya asal-usul titik di peta bisa diaudit.
+    """
     start_time = time.time()
+    title = (title or "").strip() or path.stem
     try:
         import numpy as np
-        from uvip_ai.segmentation.segformer import SegformerB5
         from uvip_ai.pipeline.video_processor import CITYSCAPES_COLORS
         from PIL import Image as PILImage
-        
-        # Load model
-        seg = SegformerB5(low_vram_mode=True)
+        from uvip_ai.utils.exif import read_capture_location
+
+        # Load model (cached singleton - jangan bikin instance baru per request,
+        # itu memuat ulang 1.2 GB bobot dari disk setiap foto masuk).
+        seg = get_seg_model()
         image = cv2.imread(str(path))
         if image is None:
             raise ValueError(f"Cannot read image: {path}")
-        
+
         # Run inference
         # PENTING: cv2.imread() menghasilkan BGR, sedangkan SegFormer dilatih
         # dengan RGB. Tanpa konversi ini, prediksi meleset (mis. building
@@ -767,66 +788,93 @@ def post_process(path: Path) -> dict:
         seg_map = result["seg_map"]
         metrics = result["metrics"]
         pct_by_class = result["pct_by_class"]
-        # Save segmentation visualization and mask
-        seg_dir = uploads_dir / "segmentation"
-        seg_dir.mkdir(parents=True, exist_ok=True)
-        masks_dir = uploads_dir / "masks"
-        masks_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = int(time.time() * 1000)
-        file_stem = Path(path).stem
-        
+
+        # Nama artefak mengikuti skema lama: turunan memakai stem file original
+        # (yang sudah berisi UUID upload) + satu timestamp epoch untuk semua
+        # artefak foto ini.
+        source_stem = path.stem
+        stamp = timestamp_ms()
+        seg_path = output_path(SEGMENTATION_DIR, "seg_", source_stem, ".jpg", stamp)
+        mask_path = output_path(MASKS_DIR, "mask_", source_stem, ".jpg", stamp)
+        overlay_path = output_path(SEGMENTATION_DIR, "overlay_", source_stem, ".jpg", stamp)
+        result_path = output_path(RESULTS_DIR, "result_", source_stem, ".json", stamp)
+
         # Color-coded segmentation map (BGR to RGB)
         seg_img = np.zeros((seg_map.shape[0], seg_map.shape[1], 3), dtype=np.uint8)
         for class_id, color in CITYSCAPES_COLORS.items():
             mask = seg_map == class_id
             if np.any(mask):
                 seg_img[mask] = color
-        
+
         pil_seg = PILImage.fromarray(seg_img[..., ::-1])  # BGR to RGB
-        seg_path = seg_dir / f"seg_{file_stem}_{timestamp}.jpg"
         pil_seg.save(str(seg_path))
         logger.info("💾 Segmentation saved: %s", seg_path)
-        
-        # Create privacy masked version (blur non-road areas)
-        keep_classes = np.isin(seg_map, [0, 1, 2, 6, 7, 8])  # road, sidewalk, building, wall, fence, pole
+
+        # Privacy mask: pertahankan seluruh kelas STATIS, blur objek bergerak
+        # (orang, pengendara, kendaraan). ID2LABEL Cityscapes: 0 road,
+        # 1 sidewalk, 2 building, 3 wall, 4 fence, 5 pole, 6 traffic light,
+        # 7 traffic sign, 8 vegetation, 9 terrain, 10 sky, lalu 11-18 adalah
+        # person/rider/car/truck/bus/train/motorcycle/bicycle.
+        # Versi lama memakai [0, 1, 2, 6, 7, 8] sehingga wall/fence/pole ikut
+        # diblur padahal statis.
+        keep_classes = np.isin(seg_map, np.arange(11))  # semua kelas statis
         blurred = cv2.GaussianBlur(image, (5, 5), 0)
         masked_image = np.where(keep_classes[..., None], image, blurred)
-        mask_path = masks_dir / f"mask_{file_stem}_{timestamp}.jpg"
         cv2.imwrite(str(mask_path), masked_image)
         logger.info("🛡️ Privacy mask saved: %s", mask_path)
-        
+
         # Create overlay (original + segmentation blend)
         original_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         overlay = cv2.addWeighted(original_rgb, 0.6, seg_img[..., ::-1], 0.4, 0)
-        overlay_path = seg_dir / f"overlay_{file_stem}_{timestamp}.jpg"
         pil_overlay = PILImage.fromarray(overlay)
         pil_overlay.save(str(overlay_path))
         logger.info("🎨 Overlay saved: %s", overlay_path)
-        
-        unified = build_unified_metrics(pct_by_class, seg_map.shape, int((time.time() - start_time) * 1000), metrics=metrics)
+
+        unified = build_unified_metrics(
+            pct_by_class, seg_map.shape,
+            int((time.time() - start_time) * 1000), metrics=metrics)
+
+        # Lokasi pengambilan: EXIF/sidecar diutamakan. Fallback ke koordinat
+        # kiriman klien (posisi perangkat saat upload) dan diberi label
+        # sumbernya, supaya backend/dashboard bisa membedakan keduanya.
+        capture_location = read_capture_location(path)
+        if capture_location is None and latitude is not None and longitude is not None:
+            capture_location = {
+                "latitude": round(float(latitude), 7),
+                "longitude": round(float(longitude), 7),
+                "source": "client_upload",
+                "captured_at": None,
+                "altitude_m": None,
+                "direction_deg": None,
+            }
+
         result_response = {
-            "privacy_masked_url": f"/uploads/masks/{mask_path.name}",
-            "segmentation_url": f"/uploads/segmentation/{seg_path.name}",
-            "segmentation_overlay_url": f"/uploads/segmentation/{overlay_path.name}",
-            "original_image_url": _upload_url(path),
+            "photo_id": title,
+            "privacy_masked_url": url_for(mask_path),
+            "segmentation_url": url_for(seg_path),
+            "segmentation_overlay_url": url_for(overlay_path),
+            "original_image_url": url_for(path),
+            "result_url": url_for(result_path),
+            "result_path": rel_path(result_path),
+            "capture_location": capture_location,
             **unified,
         }
 
-        json_dir = uploads_dir / "results"
-        json_dir.mkdir(parents=True, exist_ok=True)
-        json_path = json_dir / f"result_{file_stem}_{timestamp}.json"
-        with open(json_path, 'w') as f:
-            json.dump(result_response, f, indent=2)
-        logger.info("📄 Results saved: %s", json_path)
-        
+        write_json_atomic(result_path, result_response)
+        logger.info("📄 Results saved: %s", result_path)
         logger.info("✅ Processing complete")
-        
         return result_response
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         logger.error("Processing error: %s\n%s", str(e), traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
-def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overlay_alpha: float, photo_id: Optional[str]):
+
+
+def _run_video_task(task_id: str, video_path: Path,
+                    fps: Optional[float], overlay_alpha: float,
+                    photo_id: Optional[str]):
     # Sync (bukan async): Starlette menjalankannya di threadpool, jadi infer
     # PyTorch yang blocking tidak membekukan event loop (status/result 404/202
     # palsu). Jangan jadikan async lagi tanpa executor.
@@ -834,29 +882,29 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
     try:
         from uvip_ai.pipeline.video_processor import VideoProcessor
         # seg_model via get_seg_model() for caching and CUDA probe
-        
+
         with video_tasks_lock:
             video_tasks[task_id]["status"] = "processing"
             video_tasks[task_id]["phase"] = "initializing"
-        
+
         # Initialize models (lazy load) — use cached instance with CUDA probe
         logger.info("Loading models for video task %s...", task_id)
         t0 = time.time()
         seg_model = get_seg_model()
         logger.info("Model ready for task %s in %.0fs", task_id, time.time() - t0)
-        processor = VideoProcessor()
-        
+        processor = VideoProcessor(output_dir=str(VIDEOS_DIR))
+
         # Open video
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             raise ValueError(f"Cannot open video: {video_path}")
-        
+
         original_fps = cap.get(cv2.CAP_PROP_FPS)
         if not (isinstance(original_fps, (int, float)) and original_fps > 0 and original_fps < 1000):
             original_fps = 25.0
         target_fps = fps if (isinstance(fps, (int, float)) and fps > 0 and fps < 1000) else original_fps
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
+
         with video_tasks_lock:
             video_tasks[task_id]["total_frames"] = total_frames
             video_tasks[task_id]["phase"] = "processing_0"
@@ -866,11 +914,11 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
                 "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                 "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
             }
-        
+
         # Frame TIDAK ditahan di RAM. Server kecil (RAM ~9GB) OOM/EAGAIN kalau
         # 408 frame 1080p disimpan sekaligus (~2.5GB per salinan, x2 dengan
         # overlay). Tulis tiap overlay JPG ke disk tepat setelah dibuat.
-        frames_dir = processor.output_dir / f"frames_{task_id}"
+        frames_dir = TEMP_DIR / f"frames_{task_id}"
         frames_dir.mkdir(parents=True, exist_ok=True)
         frame_size = None
 
@@ -921,7 +969,8 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
 
         if n_frames_processed == 0:
             raise ValueError("No frames processed")
-        output_video_path = processor.output_dir / f"video_{task_id}.mp4"
+        VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+        output_video_path = VIDEOS_DIR / f"video_{task_id}.mp4"
         # VideoWriter+mp4v unreliable di server (file 0-byte/raw corrupt -> ffmpeg
         # "received no packets"). Frame sudah ditulis ke disk sebagai JPG ->
         # encode JPG->H264 langsung (streaming, tanpa menahan frame di RAM).
@@ -938,20 +987,24 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
 
         # Prepare result
         processing_time_ms = int((time.time() - start_time) * 1000)
-        video_url = f"/uploads/videos/{output_video_path.name}"
+        video_url = url_for(output_video_path)
         video_codec = _video_codec(output_video_path)
         n = max(1, len(frame_pcts))
         class_keys = sorted({k for p in frame_pcts for k in p})
         avg_pct = {k: sum(p.get(k, 0.0) for p in frame_pcts) / n for k in class_keys}
         h, w = frame_size if frame_size else (0, 0)
         unified = build_unified_metrics(avg_pct, (h, w), processing_time_ms)
+        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        result_path = RESULTS_DIR / f"result_video_{task_id}.json"
         result_response = {
             "status": "completed",
             "task_id": task_id,
-            "filename": video_path.name,
+            "filename": video_tasks[task_id]["filename"],
             "video_url": video_url,
             "video_overlay_url": video_url,
-            "original_video_url": _upload_url(video_path),
+            "original_video_url": url_for(video_path),
+            "result_url": url_for(result_path),
+            "result_path": rel_path(result_path),
             "video_codec": video_codec,
             "video_playable_in_browser": _is_h264(video_codec),
             "total_frames": n_frames_processed,
@@ -961,34 +1014,31 @@ def _run_video_task(task_id: str, video_path: Path, fps: Optional[float], overla
             "processing_time_ms": processing_time_ms,
             **unified,
         }
-        json_dir = uploads_dir / "results"
-        json_dir.mkdir(parents=True, exist_ok=True)
-        json_path = json_dir / f"result_video_{task_id}.json"
-        with open(json_path, "w") as f:
-            json.dump(result_response, f, indent=2)
-        logger.info("📄 Video results saved: %s", json_path)
+        write_json_atomic(result_path, result_response)
+        logger.info("📄 Video results saved: %s", result_path)
         with video_tasks_lock:
             video_tasks[task_id]["status"] = "completed"
+            video_tasks[task_id]["phase"] = "completed"
             video_tasks[task_id]["result"] = result_response
             video_tasks[task_id]["finished_at"] = time.time()
-        
+
         logger.info("✅ Video task %s completed: %s frames in %dms",
                     task_id, n_frames_processed, processing_time_ms)
-        
+
         # Post to backend if photo_id provided (sync worker: jalankan coroutine via asyncio.run)
         if photo_id:
             import asyncio
             asyncio.run(_post_result_to_backend(photo_id, result_response))
-    
+
     except Exception as e:
         import traceback
         logger.error("❌ Video task %s failed: %s\n%s", task_id, str(e), traceback.format_exc())
-        
+
         with video_tasks_lock:
             video_tasks[task_id]["status"] = "failed"
+            video_tasks[task_id]["phase"] = "failed"
             video_tasks[task_id]["error"] = str(e)
             video_tasks[task_id]["finished_at"] = time.time()
-
 
 @app.post("/ai/process-video")
 async def process_video(
@@ -1004,7 +1054,12 @@ async def process_video(
     _cleanup_old_tasks()
 
     task_id = str(uuid.uuid4())[:8]
-    path = await asyncio.to_thread(save_upload, file, "originals")
+    upload_stem = Path(file.filename or "").stem.strip()
+    upload_stem = upload_stem or (photo_id or "").strip() or "video"
+    video_path = await asyncio.to_thread(
+        save_upload, file.file, "originals", upload_stem,
+        guess_suffix(file.filename, file.content_type, "video"),
+    )
 
     with video_tasks_lock:
         video_tasks[task_id] = {
@@ -1020,7 +1075,8 @@ async def process_video(
             "finished_at": None,
         }
 
-    background_tasks.add_task(_run_video_task, task_id, path, fps, overlay_alpha, photo_id)
+    background_tasks.add_task(_run_video_task, task_id, video_path,
+                              fps, overlay_alpha, photo_id)
     logger.info("Task %s queued: %s", task_id, file.filename)
 
     return JSONResponse({
@@ -1105,6 +1161,8 @@ async def list_video_tasks(status: Optional[str] = None):
 
     result.sort(key=lambda x: x["created_at"], reverse=True)
     return result
+
+
 async def _post_result_to_backend(photo_id: str, result: dict):
     """Kirim hasil segmentasi ke backend-uvip untuk disimpan ke DB."""
     from uvip_ai.config import settings
@@ -1127,17 +1185,26 @@ async def _post_result_to_backend(photo_id: str, result: dict):
 async def process_photo(
     file: UploadFile = File(...),
     photo_id: str = Form(""),
+    latitude: Optional[float] = Form(None),
+    longitude: Optional[float] = Form(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Process foto jalan → return masking, segmentasi, prediksi, explainability."""
     start = time.time()
     logger.info("📥 Foto masuk: %s (size: %s, photo_id: %s)", file.filename, file.size, photo_id)
     try:
-        path = save_upload(file, subdir="originals")
+        # Nama file original mengikuti skema lama: <stem upload>_<uuid4>.
+        upload_stem = Path(file.filename or "").stem.strip()
+        upload_stem = upload_stem or (photo_id or "").strip() or "photo"
+        title = (photo_id or "").strip() or upload_stem
+        path = save_upload(
+            file.file, "originals", upload_stem,
+            guess_suffix(file.filename, file.content_type, "photo"),
+        )
         logger.info("💾 Foto disimpan: %s", path)
 
         logger.info("⚙️  Memproses: %s ...", file.filename)
-        result = post_process(path)
+        result = post_process(path, title, latitude=latitude, longitude=longitude)
 
         elapsed = (time.time() - start) * 1000
         logger.info("✅ Selesai: %s — %.0fms", file.filename, elapsed)
@@ -1147,10 +1214,151 @@ async def process_photo(
             background_tasks.add_task(_post_result_to_backend, photo_id, result)
 
         return JSONResponse(result)
+    except HTTPException:
+        raise
     except Exception as e:
         elapsed = (time.time() - start) * 1000
         logger.error("❌ Gagal: %s — %s (%.0fms)", file.filename, str(e), elapsed)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ai/advise", summary="Foto → segmentasi + skor PVI → rekomendasi LLM (satu langkah)")
+async def ai_advise(
+    file: UploadFile = File(...),
+    photo_id: str = Form(""),
+    latitude: Optional[float] = Form(None),
+    longitude: Optional[float] = Form(None),
+    location: Optional[str] = Form(None),
+    context: Optional[str] = Form(None),
+    model: Optional[str] = Form(None),
+    detail: str = Form("high"),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
+    """Satu langkah: foto → segmentasi + skor PVI → rekomendasi LLM.
+
+    Gabungan ``/ai/process`` dan ``/llm/advise``: metrik dan skor diambil
+    langsung dari hasil pipeline (``result_context``), jadi klien tidak perlu
+    menyalin angka dari respons segmentasi ke parameter prompt.
+
+    Beda dengan ``/ai/process``: respons memuat ``advice`` (diagnosis,
+    masalah, rekomendasi 3 peran, prompt gambar, caveat) dan
+    ``advice_context`` (model, durasi, parse_ok). Callback ke backend tidak
+    menyertakan ``advice`` karena itu artefak tampilan, bukan data DB.
+    """
+    start = time.time()
+    logger.info("📥 Foto masuk (advise): %s (photo_id: %s)", file.filename, photo_id)
+    try:
+        upload_stem = Path(file.filename or "").stem.strip()
+        upload_stem = upload_stem or (photo_id or "").strip() or "photo"
+        title = (photo_id or "").strip() or upload_stem
+        path = save_upload(
+            file.file, "originals", upload_stem,
+            guess_suffix(file.filename, file.content_type, "photo"),
+        )
+        result = post_process(path, title, latitude=latitude, longitude=longitude)
+
+        metrics, scores = llm_result_context(result)
+        loc = location
+        if not loc:
+            cap = result.get("capture_location")
+            if isinstance(cap, dict) and cap.get("latitude") is not None:
+                loc = (f"{float(cap['latitude']):.5f}, "
+                       f"{float(cap['longitude']):.5f} (EXIF)"
+                       if cap.get("source") == "exif_gps"
+                       else f"{float(cap['latitude']):.5f}, {float(cap['longitude']):.5f}")
+
+        block = await llm_advise(
+            image_bytes=path.read_bytes(),
+            filename=file.filename,
+            metrics=metrics,
+            scores=scores,
+            location=loc,
+            context=context,
+            model=model,
+            detail=detail,
+        )
+        result["advice"] = block["advice"]
+        result["advice_context"] = block["context"]
+
+        elapsed = (time.time() - start) * 1000
+        logger.info("✅ Advise selesai: %s — %.0fms (llm %dms, model %s, parse_ok %s)",
+                    file.filename, elapsed, block["elapsed_ms"],
+                    block["model_used"], block["parse_ok"])
+
+        if photo_id:
+            # advice/advice_context hanya untuk klien, bukan untuk DB.
+            payload = {k: v for k, v in result.items()
+                       if k not in ("advice", "advice_context")}
+            background_tasks.add_task(_post_result_to_backend, photo_id, payload)
+
+        return JSONResponse(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        elapsed = (time.time() - start) * 1000
+        logger.error("❌ Gagal (advise): %s — %s (%.0fms)", file.filename, str(e), elapsed)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/ai/geojson/results")
+def results_geojson(limit: int = 500):
+    """FeatureCollection dari file hasil di ``uploads/results`` (mode lokal).
+
+    Endpoint ini membaca arsip JSON yang ditulis ``post_process``, bukan
+    database. Untuk aplikasi produksi pakai
+    ``GET /street-photos/geojson`` di backend-uvip (sumbernya PostGIS,
+    mencakup semua foto termasuk yang belum diproses AI).
+
+    Hanya hasil yang punya ``capture_location`` yang muncul - tanpa koordinat
+    titik tidak bisa ditempatkan di peta.
+    """
+    results_dir = uploads_dir / "results"
+    files: list[Path] = []
+    if results_dir.is_dir():
+        files.extend(results_dir.glob("result_*.json"))
+    if not files:
+        return JSONResponse({"type": "FeatureCollection", "features": []})
+
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    features = []
+    for json_file in files:
+        if len(features) >= limit:
+            break
+        try:
+            data = json.loads(json_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        location = data.get("capture_location") or {}
+        lat = location.get("latitude")
+        lon = location.get("longitude")
+        if lat is None or lon is None:
+            continue
+        scores = data.get("perception_prediction") or {}
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
+            "properties": {
+                "result_file": json_file.name,
+                "result_path": rel_path(json_file),
+                "capture_source": location.get("source"),
+                "captured_at": location.get("captured_at"),
+                "beauty_score": scores.get("beauty_score"),
+                "safety_score": scores.get("safety_score"),
+                "comfort_score": scores.get("comfort_score"),
+                "uvi_score": scores.get("uvi_score"),
+                "segmentation_overlay_url": data.get("segmentation_overlay_url"),
+                "privacy_masked_url": data.get("privacy_masked_url"),
+                "original_image_url": data.get("original_image_url"),
+                "processing_time_ms": data.get("_processing_time_ms"),
+            },
+        })
+
+    return JSONResponse(
+        content={"type": "FeatureCollection", "features": features},
+        media_type="application/geo+json",
+    )
+
+
 @app.post("/")
 async def serverless_root(payload: dict = None):
     """Root handler for RunPod Queue Serverless"""

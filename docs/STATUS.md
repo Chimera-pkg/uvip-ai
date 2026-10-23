@@ -332,8 +332,11 @@ docs/
 
 **Solution**:
 ```bash
-# Use batch size 1
-python scripts/extract_features.py --batch-size 1
+# Mode hemat VRAM sudah default (low_vram_mode=True).
+# Kalau masih OOM: proses satu area per run
+python scripts/extract_features.py \
+  --input data/extracted/photos/KAYUTANGAN \
+  --output data/training/features_kayutangan.csv
 
 # Or use cloud GPU
 ```

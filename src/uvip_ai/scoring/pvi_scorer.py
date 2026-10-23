@@ -1,50 +1,49 @@
-"""PVI scorer - 8 indeks penelitian -> 4 skor `perception_prediction`.
+"""PVI scorer - 8 indeks penelitian -> 4 skor ``perception_prediction``.
 
 KONTEKS
 =======
-Modul ini menggantikan rumus hardcoded di ``uvip_ai/api/main.py``
-(``build_unified_metrics``) yang menghasilkan skor selalu 10 karena
-``min(10, ...)`` jenuh.
+Modul ini menggantikan rumus hardcoded di ``build_unified_metrics``
+(``uvip_ai/api/main.py``) yang memakai ``min(10, ...)`` sehingga skor
+selalu mentok 10. Struktur JSON output TIDAK berubah - yang berubah hanya
+isi 4 angka: ``beauty_score``, ``safety_score``, ``comfort_score``,
+``uvi_score``.
 
-Struktur JSON output TIDAK berubah. Yang berubah hanya ISI 4 angka:
-``beauty_score``, ``safety_score``, ``comfort_score``, ``uvi_score``.
+SUMBER RUMUS
+============
+``Photogenic_Value_Index_Multi_Foto.ipynb`` (repo root), bagian
+"11. COMPOSITE VISUAL INDICES" dan "11A. THEORETICAL WEIGHTING":
 
-SUMBER DATA
-===========
-Input adalah ``metrics`` dari ``SegformerB5.infer(excel_mode=True)`` -
-8 indeks yang SUDAH dihitung runtime saat ini tetapi dibuang:
+    BVI  Building Visibility       0.20
+    VCI  Vegetation Coverage       0.15
+    SOI  Sky Openness              0.10
+    GAI  Ground Accessibility      0.10
+    HAI  Human Activity            0.10
+    VII  Vehicle Intensity         0.05
+    TII  Traffic Infrastructure    0.05
+    HDI  Heritage Dominance        0.25
 
-    building_visibility_index    BVI
-    vegetation_coverage_index    VCI
-    sky_openness_index           SOI
-    ground_accessibility_index   GAI
-    human_activity_index         HAI   (selalu 0 - tidak dipakai)
-    vehicle_intensity_index      VDI
-    traffic_infrastructure_index TII
-    heritage_dominance_index     HDI   (selalu 0 - tidak dipakai)
+    PVI = 0.20*BVI + 0.15*VCI + 0.10*SOI + 0.10*GAI
+        + 0.10*HAI + 0.05*VII + 0.05*TII + 0.25*HDI
 
-RUMUS
-=====
-PVI = 0.06*BVI + 0.10*VCI + 0.56*SOI + 0.10*GAI + 0.18*VDI
+Bobot dijumlahkan 1.00. Kedelapan indeks dihitung di
+``SegformerB5._compute_excel_metrics`` (mode ``excel_mode=True``).
 
-Pemetaan ke 4 field (normalisasi min-max terhadap ``CALIBRATION``):
-
+PEMETAAN KE 4 FIELD KONTRAK
+===========================
     beauty_score  <- PVI
     safety_score  <- 0.6*GAI + 0.4*TII
     comfort_score <- 0.5*VCI + 0.5*SOI
     uvi_score     <- 0.4*beauty + 0.3*safety + 0.3*comfort   (rumus lama)
 
-BUG YANG DITANGANI DI SISI KONSUMEN (tanpa mengubah segformer.py)
-================================================================
-``vehicle_intensity_index`` tidak di-clamp di sumbernya, sehingga bisa
-melebihi 1.0 (terukur: 1.4273 pada ALUN_ALUN_MERDEKA_BS-03). Modul ini
-meng-clamp VDI ke [0, 1] sebelum dipakai.
+Setiap skor dinormalisasi min-max ke 1..10 memakai ``CALIBRATION`` -
+anchor persentil (p2/p98) dari segmentasi live dataset referensi
+(431 foto). Lihat ``scripts/calibrate_pvi.py``.
 
 KETERBATASAN (jujur)
 ====================
-Skor ini BUKAN persepsi manusia. Masih murni turunan piksel - hanya
-formulasinya masuk akal dan tidak jenuh. Validasi terhadap penilaian
-panel manusia belum ada.
+Skor ini BUKAN persepsi manusia. Masih turunan piksel - hanya formulasinya
+mengikuti dokumen penelitian, diberi bobot bermakna, dan tidak jenuh.
+Validasi terhadap panel penilaian manusia belum ada.
 """
 
 from __future__ import annotations
@@ -54,39 +53,50 @@ from typing import Any, Dict, Mapping
 __all__ = [
     "CALIBRATION",
     "PVI_WEIGHTS",
+    "INDEX_KEYS",
     "SCORE_MIN",
     "SCORE_MAX",
     "compute_pvi",
+    "safety_index",
+    "comfort_index",
     "compute_scores",
     "compute_scores_from_metrics",
     "indices_from_pct_by_class",
 ]
 
-
 # --------------------------------------------------------------------------
-# Bobot PVI (sesuai dokumen penelitian)
+# Bobot PVI - tabel "theoretical_weights" notebook penelitian.
 # --------------------------------------------------------------------------
 PVI_WEIGHTS: Dict[str, float] = {
-    "building_visibility_index": 0.06,
-    "vegetation_coverage_index": 0.10,
-    "sky_openness_index": 0.56,
+    "building_visibility_index": 0.20,
+    "vegetation_coverage_index": 0.15,
+    "sky_openness_index": 0.10,
     "ground_accessibility_index": 0.10,
-    "vehicle_intensity_index": 0.18,
+    "human_activity_index": 0.10,
+    "vehicle_intensity_index": 0.05,
+    "traffic_infrastructure_index": 0.05,
+    "heritage_dominance_index": 0.25,
 }
 
 # --------------------------------------------------------------------------
-# Anchor kalibrasi: min/max terukur dari 60 foto data nyata.
-# Dipakai untuk normalisasi min-max -> skor 1..10.
-# Hitung ulang dengan: python scripts/calibrate_pvi.py
+# Anchor kalibrasi: persentil p2 / p98 dari segmentasi live 431 foto
+# (data/extracted/photos). Bukan min/max absolut, supaya tidak ada satu
+# foto outlier yang menggeser seluruh skala.
+# Hitung ulang: python scripts/calibrate_pvi.py --photos data/extracted/photos --write
 # --------------------------------------------------------------------------
 CALIBRATION: Dict[str, Dict[str, float]] = {
-    "pvi": {"min": 0.08729200000000001, "max": 0.406776},
-    "safety_raw": {"min": 0.05046, "max": 0.25554},
-    "comfort_raw": {"min": 0.06775, "max": 0.3413},
+    "pvi": {"min": 0.2633, "max": 0.3820},
+    "safety_raw": {"min": 0.1738, "max": 0.3546},
+    "comfort_raw": {"min": 0.1616, "max": 0.3918},
 }
 
 SCORE_MIN = 1.0
 SCORE_MAX = 10.0
+
+# Indeks yang wajib ada agar sebuah dict dianggap "metrics Excel" (bukan
+# metrics 5-field jalur video). Dipakai build_unified_metrics untuk memutuskan
+# jalur mana yang dipakai.
+INDEX_KEYS = tuple(PVI_WEIGHTS)
 
 
 def _get(metrics: Mapping[str, Any], key: str, default: float = 0.0) -> float:
@@ -118,55 +128,58 @@ def _normalize(value: float, anchor: Mapping[str, float]) -> float:
 
 
 def compute_pvi(metrics: Mapping[str, Any]) -> float:
-    """Perceptual Vegetation Index (PVI) - indeks komposit 5 dimensi.
-
-    ``vehicle_intensity_index`` di-clamp ke [0, 1] lebih dulu (fix bug).
-    """
-    vdi = _clamp(_get(metrics, "vehicle_intensity_index"))
-    return (
-        PVI_WEIGHTS["building_visibility_index"]
-        * _clamp(_get(metrics, "building_visibility_index"))
-        + PVI_WEIGHTS["vegetation_coverage_index"]
-        * _clamp(_get(metrics, "vegetation_coverage_index"))
-        + PVI_WEIGHTS["sky_openness_index"]
-        * _clamp(_get(metrics, "sky_openness_index"))
-        + PVI_WEIGHTS["ground_accessibility_index"]
-        * _clamp(_get(metrics, "ground_accessibility_index"))
-        + PVI_WEIGHTS["vehicle_intensity_index"] * vdi
+    """PVI - jumlah tertimbang 8 indeks (semua di-clamp ke 0..1)."""
+    return sum(
+        weight * _clamp(_get(metrics, key))
+        for key, weight in PVI_WEIGHTS.items()
     )
 
 
-def compute_scores(metrics: Mapping[str, Any]) -> Dict[str, Any]:
-    """Ubah 8 indeks penelitian menjadi 4 skor siap-kontrak API.
+def safety_index(metrics: Mapping[str, Any]) -> float:
+    """Bahan ``safety_score``: akses pejalan kaki + infrastruktur lalu lintas."""
+    return 0.6 * _clamp(_get(metrics, "ground_accessibility_index")) + 0.4 * _clamp(
+        _get(metrics, "traffic_infrastructure_index")
+    )
+
+
+def comfort_index(metrics: Mapping[str, Any]) -> float:
+    """Bahan ``comfort_score``: tutupan vegetasi + keterbukaan langit."""
+    return 0.5 * _clamp(_get(metrics, "vegetation_coverage_index")) + 0.5 * _clamp(
+        _get(metrics, "sky_openness_index")
+    )
+
+
+def compute_scores(metrics: Mapping[str, Any],
+                   calibration: Mapping[str, Mapping[str, float]] | None = None) -> Dict[str, Any]:
+    """8 indeks -> 4 skor siap-kontrak API.
 
     Parameters
     ----------
-    metrics:
-        Dict hasil ``seg.infer(excel_mode=True)["metrics"]``.
+    calibration:
+        Anchor pengganti ``CALIBRATION`` (dipakai ``scripts/calibrate_pvi.py``
+        untuk menilai sebaran skor dengan anchor hasil hitung barunya, sebelum
+        ditulis ke modul).
 
     Returns
     -------
     dict
         ``beauty_score`` / ``safety_score`` / ``comfort_score`` /
-        ``uvi_score`` (float, 2 desimal) plus ``_raw`` untuk audit.
+        ``uvi_score`` plus ``_raw`` untuk audit.
 
-    Catatan: nilai mentah dihitung penuh (belum dibulatkan) sebelum
-    dipakai menghitung ``uvi_score``, lalu semuanya dibulatkan.
+    Nilai mentah dihitung penuh (belum dibulatkan) sebelum dipakai
+    menghitung ``uvi_score``, lalu semuanya dibulatkan.
     """
     if not metrics:
         metrics = {}
+    anchors = calibration or CALIBRATION
 
     pvi = compute_pvi(metrics)
-    safety_raw = 0.6 * _clamp(
-        _get(metrics, "ground_accessibility_index")
-    ) + 0.4 * _clamp(_get(metrics, "traffic_infrastructure_index"))
-    comfort_raw = 0.5 * _clamp(
-        _get(metrics, "vegetation_coverage_index")
-    ) + 0.5 * _clamp(_get(metrics, "sky_openness_index"))
+    safety_raw = safety_index(metrics)
+    comfort_raw = comfort_index(metrics)
 
-    beauty = _normalize(pvi, CALIBRATION["pvi"])
-    safety = _normalize(safety_raw, CALIBRATION["safety_raw"])
-    comfort = _normalize(comfort_raw, CALIBRATION["comfort_raw"])
+    beauty = _normalize(pvi, anchors["pvi"])
+    safety = _normalize(safety_raw, anchors["safety_raw"])
+    comfort = _normalize(comfort_raw, anchors["comfort_raw"])
 
     # Rumus UVI dipertahankan dari implementasi lama.
     uvi = (beauty / 10.0) * 0.4 + (safety / 10.0) * 0.3 + (comfort / 10.0) * 0.3
@@ -184,90 +197,43 @@ def compute_scores(metrics: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def compute_scores_from_metrics(
-    metrics: Mapping[str, Any],
-) -> Dict[str, float]:
-    """Varian ringkas: hanya 4 field kontrak, tanpa ``_raw``.
-
-    Cocok untuk langsung di-``**`` ke payload ``perception_prediction``.
-    """
-    scores = compute_scores(metrics)
+def compute_scores_from_metrics(metrics: Mapping[str, Any],
+                                calibration: Mapping[str, Mapping[str, float]] | None = None) -> Dict[str, float]:
+    """Varian ringkas: hanya 4 field kontrak, tanpa ``_raw``."""
+    scores = compute_scores(metrics, calibration)
     scores.pop("_raw", None)
     return scores
 
 
-def indices_from_pct_by_class(
-    pct_by_class: Mapping[str, Any],
-) -> Dict[str, float]:
-    """Hitung 8 indeks dari ``pct_by_class`` (fallback).
+def indices_from_pct_by_class(pct_by_class: Mapping[str, Any]) -> Dict[str, float]:
+    """Indeks rasio-piksel saja, untuk jalur yang tidak punya seg_map + piksel.
 
-    Dipakai saat ``metrics`` dari ``infer(excel_mode=True)`` tidak tersedia -
-    terutama jalur VIDEO, yang memanggil ``infer()`` tanpa ``excel_mode``
-    sehingga ``metrics`` tidak pernah ada.
+    Dipakai jalur VIDEO (``_run_video_task`` merata-ratakan ``pct_by_class``
+    seluruh frame dan memanggil ``build_unified_metrics`` tanpa ``metrics``).
 
-    Meniru ``SegformerB5._compute_excel_metrics`` semantik-untuk-semantik,
-    termasuk re-normalisasi yang membuang objek bergerak (pedestrian,
-    kendaraan) dari komposisi statis. Re-normalisasi inilah yang membuat
-    indeks berbeda dari sekadar ``pct/100`` mentah.
+    Empat indeks murni rasio dihitung identik dengan jalur foto. Empat
+    indeks yang butuh bentuk/warna/tekstur dihitung versi rasionya saja:
 
-    Tidak mengubah ``segformer.py`` - murni di sisi konsumen.
+        BVI = building_ratio
+        HDI = 0.40 * BVI          (suku solidity/warna/tekstur dihilangkan)
+
+    Konsekuensinya skor video sistematis lebih rendah daripada skor foto
+    untuk isi yang sama. Ini disengaja: jalur video tidak boleh menambah
+    biaya per-frame dan tidak boleh diubah.
     """
     get = lambda key: _get(pct_by_class, key)  # noqa: E731
+    ratio = lambda key: min(get(key) / 100.0, 1.0)  # noqa: E731
 
-    static_categories = [
-        "building",
-        "vegetation",
-        "sky",
-        "road",
-        "sidewalk",
-        "signage",
-        "street_furniture",
-        "heritage",
-    ]
-    static_sum = sum(get(cat) for cat in static_categories)
-    scale_factor = 100.0 / static_sum if static_sum > 0 else 1.0
-    # Persentase statis ternormalisasi dalam rentang [0, 1]
-    norm = {cat: get(cat) * scale_factor / 100.0 for cat in static_categories}
-
-    building_pct = get("building")
-    vegetation_pct = get("vegetation")
-    sky_pct = get("sky")
-    road_pct = get("road")
-    sidewalk_pct = get("sidewalk")
-    signage_pct = get("signage")
-    street_furniture_pct = get("street_furniture")
-    heritage_pct = get("heritage")
-    vehicle_pct = get("vehicle")
-    pedestrian_pct = get("pedestrian")
-
-    # VDI: mengikuti perilaku sumber apa adanya (BELUM di-clamp di sini).
-    # Clamp [0, 1] dilakukan di compute_pvi().
-    vehicle_intensity = vehicle_pct * 0.51
-
-    total_building = building_pct + heritage_pct
-    heritage_dominance = (
-        heritage_pct / total_building if total_building > 0 else 0.0
-    )
-
-    # HAI: sumber membaca dari dict yang HANYA berisi kelas statis, sehingga
-    # "pedestrian" tidak pernah ada di dalamnya dan nilainya SELALU 0.
-    # Disamakan di sini agar kedua jalur konsisten. Tidak berdampak pada
-    # skor karena HAI tidak dipakai di PVI.
-    human_activity = 0.0
-
+    bvi = ratio("building")
     return {
-        "building_visibility_index": min(building_pct / 100.0, 1.0),
-        "vegetation_coverage_index": min(vegetation_pct / 100.0, 1.0),
-        "sky_openness_index": min(sky_pct / 100.0, 1.0),
-        "ground_accessibility_index": min(
-            (road_pct + sidewalk_pct) / 100.0, 1.0
-        ),
-        "human_activity_index": human_activity,
-        "vehicle_intensity_index": vehicle_intensity,
+        "building_visibility_index": bvi,
+        "vegetation_coverage_index": ratio("vegetation"),
+        "sky_openness_index": ratio("sky"),
+        "ground_accessibility_index": min(ratio("road") + ratio("sidewalk"), 1.0),
+        "human_activity_index": ratio("pedestrian"),
+        "vehicle_intensity_index": ratio("vehicle"),
         "traffic_infrastructure_index": min(
-            (signage_pct + street_furniture_pct) / 100.0, 1.0
+            ratio("signage") + ratio("street_furniture"), 1.0
         ),
-        "heritage_dominance_index": heritage_dominance,
-        "_static_normalization_factor": scale_factor,
-        "_normalized_static": norm,
+        "heritage_dominance_index": 0.40 * bvi,
     }

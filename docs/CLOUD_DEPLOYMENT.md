@@ -195,8 +195,7 @@ rsync -avz data/extracted/ user@cloud:/path/to/uvip-ai/data/extracted/
 # On cloud GPU
 python scripts/extract_features.py \
   --input data/extracted/photos \
-  --output data/training/features.csv \
-  --batch-size 8
+  --output data/training/features.csv
 ```
 
 This runs:
@@ -258,8 +257,10 @@ python scripts/predict.py \
 
 ### Optimize Training
 ```bash
-# Reduce batch size if OOM
-python scripts/extract_features.py --batch-size 4
+# Mode hemat VRAM sudah default; kalau masih OOM proses per area
+python scripts/extract_features.py \
+  --input data/extracted/photos/KAYUTANGAN \
+  --output data/training/features_kayutangan.csv
 
 # Use smaller models for testing
 export DINOV2_MODEL=facebook/dinov2-base  # 768-d instead of 1024-d
@@ -313,14 +314,14 @@ cat models/perception/metrics.json | jq
 
 ### Out of Memory (OOM)
 ```bash
-# Reduce batch size
-python scripts/extract_features.py --batch-size 2
+# Proses per area (mode hemat VRAM sudah default)
+python scripts/extract_features.py \
+  --input data/extracted/photos/KAYUTANGAN \
+  --output data/training/features_kayutangan.csv
 
 # Use fp16 mode
 export UVIP_USE_FP16=true
 
-# Clear GPU cache between models
-python scripts/extract_features.py --clear-cache
 ```
 
 ### Slow Training

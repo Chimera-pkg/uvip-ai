@@ -295,35 +295,72 @@ API akan tersedia di `http://localhost:8001`
 curl http://localhost:8001/health
 ```
 
-### Predict Perception
+### Proses Foto
 ```bash
-curl -X POST http://localhost:8001/predict \
-  -F "file=@photo.jpg" \
-  -F "latitude=-7.976" \
-  -F "longitude=112.630"
+curl -X POST http://localhost:8001/ai/process \
+  -F "file=@76117d88-42d0-4766-a2b8-97fbc4a80ecc.jpg" \
+  -F "photo_id=76117d88-42d0-4766-a2b8-97fbc4a80ecc"
 ```
 
-Response:
+Semua artefak disimpan FLAT di folder per jenis (tanpa subfolder per aset)
+dengan skema nama lama: original `<nama_upload>_<uuid4>.<ext>`, turunan
+`<prefix>_<nama_upload>_<uuid4>_<epoch_ms>.<ext>`. `<nama_upload>` = stem
+nama file upload; bila kosong dipakai `photo_id`. Satu foto memakai
+`<epoch_ms>` yang sama untuk seg/mask/overlay/result. File lama yang memakai
+timestamp `YYYYMMDD_HHMMSS` tetap bisa dibaca resolver.
+
+Response (ringkas):
 ```json
 {
-  "beauty_score": 7.2,
-  "safety_score": 6.8,
-  "comfort_score": 7.5,
-  "uvi_score": 6.9,
-  "segmentation_metrics": {
-    "green_coverage_pct": 35.2,
-    "building_coverage_pct": 28.1,
-    "walkability_ratio": 0.42,
-    "visual_clutter_index": 0.18,
-    "sky_visibility_pct": 22.5
+  "photo_id": "76117d88-42d0-4766-a2b8-97fbc4a80ecc",
+  "privacy_masked_url": "/uploads/masks/mask_76117d88-42d0-4766-a2b8-97fbc4a80ecc_1ee5f69f-62d9-45f7-9db0-96f5d8aac6a4_1792582425737.jpg",
+  "segmentation_url": "/uploads/segmentation/seg_76117d88-42d0-4766-a2b8-97fbc4a80ecc_1ee5f69f-62d9-45f7-9db0-96f5d8aac6a4_1792582425737.jpg",
+  "segmentation_overlay_url": "/uploads/segmentation/overlay_76117d88-42d0-4766-a2b8-97fbc4a80ecc_1ee5f69f-62d9-45f7-9db0-96f5d8aac6a4_1792582425737.jpg",
+  "original_image_url": "/uploads/originals/76117d88-42d0-4766-a2b8-97fbc4a80ecc_1ee5f69f-62d9-45f7-9db0-96f5d8aac6a4.jpg",
+  "result_url": "/uploads/results/result_76117d88-42d0-4766-a2b8-97fbc4a80ecc_1ee5f69f-62d9-45f7-9db0-96f5d8aac6a4_1792582425737.json",
+  "result_path": "uploads/results/result_76117d88-42d0-4766-a2b8-97fbc4a80ecc_1ee5f69f-62d9-45f7-9db0-96f5d8aac6a4_1792582425737.json",
+  "capture_location": {
+    "latitude": -7.97685,
+    "longitude": 112.6306111,
+    "source": "exif_gps",
+    "captured_at": "2026-10-22T08:31:09"
   },
-  "shap_values": {
-    "green_coverage_pct": 0.85,
-    "building_coverage_pct": -0.32,
-    ...
-  }
+  "segmentation_results": {
+    "green_coverage_pct": 13.4722,
+    "building_coverage_pct": 54.1653,
+    "walkability_ratio": 0.347,
+    "visual_clutter_index": 0.8653,
+    "sky_visibility_pct": 1.1923
+  },
+  "perception_prediction": {
+    "beauty_score": 9.69,
+    "safety_score": 6.12,
+    "comfort_score": 3.29,
+    "uvi_score": 0.67
+  },
+  "metrics_source": {"indices_source": "segformer_excel", "pct_by_class": {"...": "..."}},
+  "_processing_time_ms": 17046
 }
 ```
+
+### Rekomendasi + Redesign
+```bash
+# Segmentasi + skor + rekomendasi LLM (satu langkah)
+curl -X POST http://localhost:8001/ai/advise \
+  -F "file=@photo.jpg" \
+  -F "location=Koridor Kayutangan, Malang"
+
+# Hasil /ai/process -> gambar redesign (butuh OPENAI_API_KEY)
+# "result" menerima result_url/result_path dari respons, path artefak
+# (mask/seg/overlay) di uploads/, path file result_*.json, ATAU JSON inline.
+curl -X POST http://localhost:8001/llm/generate \
+  -F "result=/uploads/results/result_76117d88-42d0-4766-a2b8-97fbc4a80ecc_1ee5f69f-62d9-45f7-9db0-96f5d8aac6a4_1792582425737.json"
+```
+
+Skor dihitung `uvip_ai.scoring.pvi_scorer` (8 indeks SegFormer -> PVI, dinormalisasi
+1..10 dengan anchor p2/p98 dari 431 foto), bukan model persepsi terlatih — lihat
+[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md#-daftar-endpoint) untuk bentuk respons
+lengkap dan batasannya.
 
 ## 🌐 Cloud Deployment
 
@@ -382,8 +419,11 @@ KAYUTANGAN_ST-01.jpg,KAYUTANGAN,ST-01,35.2,...,0.123,...,7.2,6.8,7.5,6.9
 
 ### CUDA Out of Memory
 ```bash
-# Reduce batch size
-python scripts/extract_features.py --batch-size 4
+# Mode hemat VRAM sudah default di skrip ekstraksi/builder (low_vram_mode=True).
+# Kalau masih OOM: proses per area, bukan seluruh dataset sekaligus
+python scripts/extract_features.py \
+  --input data/extracted/photos/KAYUTANGAN \
+  --output data/training/features_kayutangan.csv
 
 # Use fp16 mode
 export UVIP_USE_FP16=true

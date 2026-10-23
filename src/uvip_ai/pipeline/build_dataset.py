@@ -17,11 +17,10 @@ User perlu menyiapkan file labels/kuesioner.csv terpisah sebelum run full traini
 """
 from __future__ import annotations
 
-import csv
 import argparse
 from pathlib import Path
 
-import numpy as np
+import cv2
 import pandas as pd
 from tqdm import tqdm
 
@@ -30,58 +29,63 @@ from uvip_ai.privacy.guard import PrivacyGuard
 from uvip_ai.segmentation.segformer import SegformerB5
 from uvip_ai.features.dinov2 import Dinov2Extractor
 
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
+
 
 class DatasetBuilder:
     """Orkestrasi pipeline untuk build dataset training."""
 
     def __init__(self, low_vram_mode: bool = True):
         self.low_vram_mode = low_vram_mode
-        self.guard = PrivacyGuard(low_vram_mode=low_vram_mode)
+        # PrivacyGuard tidak punya mode hemat VRAM (YOLOv8n kecil); argumen
+        # hanya diteruskan ke dua model besar.
+        self.guard = PrivacyGuard()
         self.seg = SegformerB5(low_vram_mode=low_vram_mode)
         self.feature = Dinov2Extractor(low_vram_mode=low_vram_mode)
 
     def _process_photo(self, photo_path: Path) -> dict | None:
         """Process satu foto → return features dict atau None jika error."""
         try:
-            # Step A: Privacy masking (optional)
-            masked_img, _ = self.guard.process(photo_path)
+            # Step A: Privacy masking (wajah & plat nomor)
+            masked_bgr = self.guard.process_image(photo_path)["blurred_image"]
+            # OpenCV BGR -> RGB: infer()/extract() memakai `image[..., :3]` apa
+            # adanya, jadi BGR akan menukar kanal merah/biru tanpa error.
+            masked_rgb = cv2.cvtColor(masked_bgr, cv2.COLOR_BGR2RGB)
 
-            # Step B: Segmentation
-            seg_result = self.seg.infer(masked_img if hasattr(masked_img, 'convert') else photo_path)
+            # Step B: Segmentation - excel_mode memberi 8 indeks PVI, sama
+            # dengan yang dipakai scorer runtime.
+            seg_result = self.seg.infer(masked_rgb, excel_mode=True)
 
             # Step C: Feature extraction
-            emb = self.feature.extract(masked_img if hasattr(masked_img, 'convert') else photo_path)
+            emb = self.feature.extract(masked_rgb)
 
-            metrics = {f"seg_{k}": v for k, v in seg_result["metrics"].items()}
-            feat = {"filename": str(photo_path), "embedding": emb, **metrics}
+            # Hanya 8 indeks publik: kunci `_components`/`_raw_percentages`
+            # berisi dict dan akan merusak kolom CSV kalau ikut ditulis.
+            metrics = {f"seg_{k}": v for k, v in seg_result["metrics"].items()
+                       if not k.startswith("_") and isinstance(v, (int, float))}
+            feat = {"embedding": emb, **metrics}
             return feat
         except Exception as e:  # noqa: BLE001
             print(f"[Dataset] Error processing {photo_path}: {e}")
             return None
-        finally:
-            if self.low_vram_mode:
-                self.seg.free_memory()
-                self.feature.free_memory()
 
     def build(self, photos_dir: Path, out_csv: Path, label_csv: Path | None = None) -> pd.DataFrame:
         """Build semua fitur + merge label → return DataFrame."""
         rows = []
         for p in tqdm(photos_dir.rglob("*"), desc="Build dataset"):
-            if not p.is_file():
+            if not p.is_file() or p.suffix.lower() not in IMAGE_SUFFIXES:
                 continue
             feat = self._process_photo(p)
             if feat is None:
                 continue
             # Parse metadata from path/filename
             parts = p.relative_to(photos_dir).parts
-            area = parts[0]
-            fname = p.name
-            point_id = fname.split(".")[0]
+            area = parts[0] if len(parts) > 1 else ""
             row = {
                 "filename": p.name,
                 "area": area,
-                "point_id": point_id,
-                "emb_" + str(i): v for i, v in enumerate(feat["embedding"])
+                "point_id": p.stem,
+                **{f"emb_{i}": v for i, v in enumerate(feat["embedding"])},
             }
             row.update({k: v for k, v in feat.items() if k != "embedding"})
             rows.append(row)
@@ -102,7 +106,8 @@ class DatasetBuilder:
         return df
 
     def free_all(self) -> None:
-        self.guard.free_memory()
+        """Lepas model besar dari VRAM (YOLOv8n kecil, cukup di-null-kan)."""
+        self.guard = None
         self.seg.free_memory()
         self.feature.free_memory()
 

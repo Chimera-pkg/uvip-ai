@@ -66,6 +66,7 @@ uploads/generated/
 uploads/videos/
 uploads/temp/
 uploads/results/
+uploads/assets/
 uploads/*.mp4
 uploads/*.mov
 uploads/*.jpg

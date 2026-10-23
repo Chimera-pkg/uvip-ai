@@ -29,6 +29,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -38,7 +39,15 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
-from uvip_ai.config import settings, PROJECT_ROOT
+from uvip_ai.config import settings
+from uvip_ai.utils.storage import (
+    GENERATED_DIR,
+    output_path,
+    rel_path,
+    resolve_result_path,
+    resolve_upload_path,
+    upload_url,
+)
 
 logger = logging.getLogger("uvip_ai.llm")
 
@@ -912,6 +921,71 @@ async def _ask_advise(*, model: str, prompt: str, image_bytes: bytes,
         detail=f"model tidak menghasilkan JSON valid; cuplikan balasan: {last_parse_error!r}.{hint}",
     )
 
+def result_context(result: dict) -> tuple[dict, dict]:
+    """Ambil (metrics, scores) dari keluaran `/ai/process`.
+
+    Dipakai `/ai/advise` supaya klien tidak perlu menyalin angka dari respons
+    segmentasi ke parameter prompt: metrik = gabungan persentase kelas dan
+    indeks (`_seg_view`), skor = isi `perception_prediction`.
+    """
+    if not isinstance(result, dict):
+        return {}, {}
+    metrics = _seg_view(result)
+    perc = result.get("perception_prediction")
+    scores = ({k: v for k, v in perc.items() if isinstance(v, (int, float))}
+              if isinstance(perc, dict) else {})
+    return metrics, scores
+
+
+async def advise_photo(*, image_bytes: bytes, filename: Optional[str] = None,
+                       media_type: Optional[str] = None,
+                       metrics: Optional[dict] = None, scores: Optional[dict] = None,
+                       location: Optional[str] = None, context: Optional[str] = None,
+                       model: Optional[str] = None, max_tokens: Optional[int] = None,
+                       temperature: Optional[float] = None,
+                       detail: str = "high") -> dict:
+    """Inti `/llm/advise` tanpa HTTP — dipakai juga oleh `/ai/advise`.
+
+    Melempar `HTTPException` yang sama seperti endpoint HTTP (400/502) supaya
+    pemanggil non-HTTP pun mendapat pesan error yang konsisten.
+    """
+    if detail not in ("auto", "low", "high"):
+        raise HTTPException(status_code=400, detail="parameter 'detail' harus auto|low|high")
+    media_type = media_type or _vision_media_type(filename, None)
+    prompt = _advise_prompt(metrics=metrics, scores=scores,
+                            location=location, extra=context)
+    out = await _ask_advise(
+        model=(model or "").strip() or settings.nine_router_advise_model,
+        prompt=prompt,
+        image_bytes=image_bytes,
+        media_type=media_type,
+        max_tokens=max_tokens if max_tokens is not None else 4096,
+        temperature=temperature,
+        detail=detail,
+    )
+    out["media_type"] = media_type
+    out["prompt"] = prompt
+    out["context"] = {
+        "upstream": _base_url(),
+        "model": out["model_used"],
+        "requested_model": out["requested_model"],
+        "elapsed_ms": out["elapsed_ms"],
+        "parse_ok": out["parse_ok"],
+        "repair_used": out["repair_used"],
+        "truncated": out.get("truncated", False),
+        "image": {
+            "filename": filename,
+            "media_type": media_type,
+            "bytes": len(image_bytes),
+            "detail": detail,
+        },
+        "metrics_provided": sorted(metrics) if metrics else [],
+        "scores_provided": sorted(scores) if scores else [],
+        "location": location,
+    }
+    return out
+
+
 @router.post("/advise", summary="Foto + metrik UVI -> rekomendasi perbaikan + prompt gambar")
 async def llm_advise(
     file: UploadFile = File(..., description="Berkas gambar: jpg/jpeg/png/webp/gif/bmp"),
@@ -954,17 +1028,15 @@ async def llm_advise(
             raise HTTPException(status_code=400, detail=f"parameter '{name}' harus objek JSON")
         return val
 
-    metrics_obj = _load_json(metrics, "metrics")
-    scores_obj = _load_json(scores, "scores")
-    prompt = _advise_prompt(metrics=metrics_obj, scores=scores_obj,
-                            location=location, extra=context)
-
-    chosen = (model or "").strip() or settings.nine_router_advise_model
-    out = await _ask_advise(
-        model=chosen,
-        prompt=prompt,
+    out = await advise_photo(
         image_bytes=image_bytes,
+        filename=file.filename,
         media_type=media_type,
+        metrics=_load_json(metrics, "metrics"),
+        scores=_load_json(scores, "scores"),
+        location=location,
+        context=context,
+        model=model,
         max_tokens=_vision_int(max_tokens, name="max_tokens",
                                default=4096, lo=1, hi=ADVISE_MAX_TOKENS_CAP),
         temperature=_vision_float(temperature, name="temperature", default=None),
@@ -991,24 +1063,7 @@ async def llm_advise(
         }],
         "advice": out["advice"],
         "answer": out["content"],
-        "context": {
-            "upstream": _base_url(),
-            "model": out["model_used"],
-            "requested_model": out["requested_model"],
-            "elapsed_ms": out["elapsed_ms"],
-            "parse_ok": out["parse_ok"],
-            "repair_used": out["repair_used"],
-            "truncated": out.get("truncated", False),
-            "image": {
-                "filename": file.filename,
-                "media_type": media_type,
-                "bytes": len(image_bytes),
-                "detail": detail,
-            },
-            "metrics_provided": sorted(metrics_obj.keys()) if metrics_obj else [],
-            "scores_provided": sorted(scores_obj.keys()) if scores_obj else [],
-            "location": location,
-        },
+        "context": out["context"],
         "usage": raw.get("usage"),
     }
 
@@ -1156,40 +1211,31 @@ def _simple_suggestions(target: dict) -> list:
     return sents[:4]
 
 
-def _target_stem(photo_path: Optional[str]) -> str:
-    """Stem nama file hasil dari photo_path bila ada, else 'gen'."""
-    if photo_path:
-        s = Path(photo_path).stem
-        if s:
-            return s[:60]
-    return "gen"
+
+
+
+_MEDIA_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif",
+                   ".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
 
 def _raw_image_url(photo_path: Optional[str]) -> Optional[str]:
-    """URL publik untuk foto mentah, hanya bila file ada DI DALAM uploads/.
-
-    `/uploads/{rel_path}` hanya menyerve isi folder uploads/, jadi file di
-    luar itu (mis. data/extracted/) tidak punya URL -> kembalikan None
-    daripada memberi URL yang 404.
-    """
+    """URL publik foto mentah; None kalau file tidak ada / di luar uploads/."""
     if not photo_path:
         return None
-    rel = Path(photo_path)
-    if not rel.is_absolute():
-        rel = PROJECT_ROOT / rel
-    if not rel.is_file():
-        return None
     try:
-        return f"/uploads/{rel.resolve().relative_to((PROJECT_ROOT / 'uploads').resolve()).as_posix()}"
-    except ValueError:
+        path = resolve_upload_path(photo_path)
+    except (ValueError, PermissionError):
         return None
+    if path.suffix.lower() not in _MEDIA_SUFFIXES:
+        return None
+    return upload_url(path) if path.is_file() else None
 
 
 def _load_target_json(result: str) -> dict:
-    """Terima isi JSON hasil /ai/process ATAU path file result_*.json.
+    """Terima isi JSON hasil /ai/process ATAU referensi ke file ``result_*.json``.
 
-    ``result`` diawali '{' -> JSON inline; selain itu dianggap path relatif ke
-    repo root (file yang ditulis /ai/process ke uploads/results/).
+    Referensi boleh berupa path/URL file result, path/URL artefak lain
+    (``overlay_*.jpg``, ``mask_*.jpg``), semua di dalam ``uploads/``.
     """
     strip = (result or "").strip()
     if not strip:
@@ -1201,20 +1247,45 @@ def _load_target_json(result: str) -> dict:
             raise HTTPException(status_code=400,
                                 detail=f"'result' bukan JSON valid: {exc}")
     else:
-        p = Path(strip)
-        if not p.is_absolute():
-            p = PROJECT_ROOT / p
-        if not p.is_file():
-            raise HTTPException(status_code=404,
-                                detail=f"file result tidak ditemukan: {p}")
         try:
-            val = json.loads(p.read_text(encoding="utf-8"))
+            path, _origin = resolve_result_path(strip)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except (ValueError, PermissionError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        try:
+            val = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=400,
                                 detail=f"file result bukan JSON valid: {exc}")
     if not isinstance(val, dict):
         raise HTTPException(status_code=400, detail="'result' harus objek JSON")
     return val
+
+
+def _save_generated(b64_json: str, stem: str) -> Path:
+    """Simpan PNG hasil OpenAI dengan nama ``img_<stem>_<epoch_ms>.png``."""
+    path = output_path(GENERATED_DIR, "img_", stem, ".png")
+    path.write_bytes(base64.b64decode(b64_json))
+    return path
+
+
+def _target_stem(target: dict, photo_path: Optional[str]) -> str:
+    """Ambil stem asli dari nama artefak (buang prefix + timestamp)."""
+    for value in (target.get("result_path"), target.get("result_url"), photo_path):
+        if not isinstance(value, str) or not value.strip():
+            continue
+        stem = Path(value).stem
+        m = re.match(
+            r"^(?:result_video|result|overlay|seg|mask|img|video)_"
+            r"(.+?)_(?:\d{8}_\d{6}|\d{10,13})(?:_\d+)?$",
+            stem,
+        )
+        if m:
+            return m.group(1)[:120]
+        if stem and not re.search(r"_(?:\d{8}_\d{6}|\d{10,13})(?:_\d+)?$", stem):
+            return stem[:120]
+    return "gen"
 
 
 async def _openai_generate_image(*, prompt: str, model: str, size: str,
@@ -1257,18 +1328,12 @@ async def _openai_generate_image(*, prompt: str, model: str, size: str,
     return {"items": out, "model": data.get("model", model)}
 
 
-def _save_generated(b64: str, stem: str) -> Path:
-    """Simpan hasil base64 ke uploads/generated/, kembalikan Path."""
-    gen_dir = PROJECT_ROOT / "uploads" / "generated"
-    gen_dir.mkdir(parents=True, exist_ok=True)
-    path = gen_dir / f"img_{stem}_{int(time.time() * 1000)}.png"
-    path.write_bytes(base64.b64decode(b64))
-    return path
+
 
 
 @router.post("/generate", summary="Baca hasil /ai/process -> generate ulang foto (OpenAI Images) + saran")
 async def llm_generate(
-    result: str = Form(..., description="JSON hasil /ai/process ATAU path file result_*.json (relatif ke repo root)"),
+    result: str = Form(..., description="JSON hasil /ai/process, atau path URL file result_*.json di server"),
     photo_path: Optional[str] = Form(None, description="Path gambar raw di server (opsional, untuk raw_image_url)"),
     prompt: Optional[str] = Form(None, description="Override prompt gambar (opsional)"),
     model: Optional[str] = Form(None, description="Model OpenAI images (default gpt-image-1)"),
@@ -1277,11 +1342,12 @@ async def llm_generate(
 ):
     """Alur satu endpoint "AI photo generator":
 
-    1. ``result`` = keluaran POST /ai/process (JSON inline ATAU path file
-       ``uploads/results/result_*.json``) -> dibaca variabel UVI/PVI &
+    1. ``result`` = keluaran POST /ai/process (JSON inline) atau referensi
+       path/URL ``result_*.json`` di server -> dibaca variabel UVI/PVI &
        persentase (``perception_prediction``, ``segmentation_results``).
     2. prompt gambar disusun SESEMPEL MUNGKIN dari angka target.
-    3. OpenAI Images API (gpt-image-1) -> PNG disimpan di ``uploads/generated/``.
+    3. OpenAI Images API (gpt-image-1) -> PNG disimpan dengan nama
+       ``img_<stem>_<epoch_ms>.png`` di ``uploads/generated/``.
     4. saran = kalimat bebas (tanpa prioritas) dari angka, bukan LLM => gratis &
        deterministik.
     5. Response berisi ``generated_image_url`` + ``raw_image_url`` + suggestions
@@ -1304,21 +1370,22 @@ async def llm_generate(
         raise HTTPException(status_code=400, detail="count harus 1..4")
 
     image_prompt = (prompt or "").strip() or _simple_image_prompt(target)
-    stem = _target_stem(photo_path)
     t0 = time.time()
     gen = await _openai_generate_image(prompt=image_prompt, model=chosen_model,
                                        size=chosen_size, count=count_n)
-    saved = []
-    for i, item in enumerate(gen["items"]):
-        p = _save_generated(item["b64_json"], stem if count_n == 1 else f"{stem}_{i + 1}")
-        saved.append(f"/uploads/generated/{p.name}")
+    stem = _target_stem(target, photo_path)
+    paths = [_save_generated(item["b64_json"], stem) for item in gen["items"]]
+    saved = [u for u in (upload_url(p) for p in paths) if u]
     elapsed_ms = int((time.time() - t0) * 1000)
 
-    raw_image_url = _raw_image_url(photo_path)
+    raw_image_url = (_raw_image_url(photo_path)
+                     or _raw_image_url(target.get("original_image_url"))
+                     or _raw_image_url(target.get("segmentation_url")))
 
     return {
-        "generated_image_url": saved[0],
+        "generated_image_url": saved[0] if saved else None,
         "generated_image_urls": saved,
+        "generated_paths": [rel_path(p) for p in paths],
         "raw_image_url": raw_image_url,
         "photo_path": photo_path,
         "target": {

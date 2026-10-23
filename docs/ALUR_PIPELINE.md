@@ -10,15 +10,15 @@ titik-titik yang dulu bikin video gagal di server.
 ```mermaid
 flowchart TD
     A[Client upload] --> B{Endpoint}
-    B -->|POST /ai/process-photo| C[post_process - sinkron]
+    B -->|POST /ai/process| C[post_process - sinkron]
     B -->|POST /ai/process-video| D[Buat task_id, status=queued<br/>balas 202 + task_id]
 
     D --> E[BackgroundTasks -> _run_video_task<br/>jalan di threadpool, bukan event loop]
-    E --> F[Client polling GET /ai/task/id]
+    E --> F[Client polling GET /ai/process-video/status/task_id]
 
     C --> G[Load SegFormer-B5]
     F -.->|status=processing| F
-    F -->|status=completed| H[GET /ai/result/task_id]
+    F -->|status=completed| H[GET /ai/process-video/result/task_id]
 
     G --> I[build_unified_metrics]
     E --> I
@@ -143,23 +143,52 @@ flowchart LR
 
 ---
 
-## 4b. Arsip File ORIGINAL (foto & video)
+## 4b. Arsip File: Flat, Kompatibel Nama Lama
 
 ```mermaid
 flowchart LR
-    A[Upload masuk] --> B["save_upload(file, 'originals')<br/>uploads/originals/"]
-    B --> C[Proses AI<br/>mask + segmentasi + overlay]
-    C --> D[Response + field original_image_url<br/>/ original_video_url]
-    B -.->|file TIDAK dihapus| E[Arsip tetap di disk]
+    A[Upload masuk] --> B["save_upload()<br/>uploads/originals/&lt;nama_upload&gt;_&lt;uuid4&gt;.&lt;ext&gt;"]
+    B --> C[Proses AI<br/>mask / seg / overlay]
+    C --> D["write_result() -> uploads/results/result_&lt;stem&gt;_&lt;epoch_ms&gt;.json"]
+    D --> E[Response: URL + result_path tiap artefak]
+    B -.->|file TIDAK dihapus| G[Arsip tetap di disk]
 ```
 
-- `save_upload()` menerima `subdir`; file original disimpan di `uploads/originals/`,
-  terpisah dari file hasil (`uploads/masks/`, `uploads/segmentation/`, `uploads/videos/`).
-- File original **tidak pernah dihapus** setelah proses selesai (dulu `path.unlink()`
-  dihapus di akhir `process_photo`).
-- `_upload_url(path)` mengembalikan URL publik hanya kalau file berada di dalam
-  `uploads/`; file di luar folder itu tidak punya route `/uploads/...` -> `None`,
-  bukan URL yang pasti 404.
+Satu foto memakai satu timestamp untuk artefak hasil proses. Semua file FLAT
+per jenis (tanpa subfolder per aset), memakai skema nama lama:
+
+```
+uploads/originals/      <nama_upload>_<uuid4>.jpg
+uploads/masks/          mask_<nama_upload>_<uuid4>_<epoch_ms>.jpg
+uploads/segmentation/   seg_<nama_upload>_<uuid4>_<epoch_ms>.jpg
+uploads/segmentation/   overlay_<nama_upload>_<uuid4>_<epoch_ms>.jpg
+uploads/results/        result_<nama_upload>_<uuid4>_<epoch_ms>.json
+uploads/generated/      img_<stem>_<epoch_ms>.png
+uploads/videos/         video_<task_id>.mp4
+uploads/results/        result_video_<task_id>.json
+```
+
+Aturan penamaan (`uvip_ai.utils.storage`):
+
+- `<nama_upload>` = stem nama file upload (spasi/simbol → `_`); bila kosong
+  dipakai `photo_id`, lalu `photo`/`video`.
+- `<uuid4>` = uuid upload pada nama original; semua artefak turunan memakai
+  stem lengkap original, jadi UUID tetap ada dan URL lama tetap cocok.
+- `<epoch_ms>` = `int(time.time() * 1000)`; satu nilai sama untuk seg/mask/
+  overlay/result satu foto. Bentrok pada milidetik yang sama diberi `_2`.
+- Video memakai `task_id` delapan karakter seperti skema lama; generate `img_`.
+- Resolver menerima timestamp lama `YYYYMMDD_HHMMSS` maupun `epoch_ms`.
+
+Kontrak penting:
+
+- File original **tidak pernah dihapus** setelah proses selesai.
+- URL publik hanya untuk file di dalam `uploads/`; di luar itu `None`, bukan
+  URL yang pasti 404.
+- Klien tidak upload ulang: cukup kirim `result_url`/`result_path`, atau path
+  artefak apa pun (`/uploads/segmentation/overlay_...jpg`). Resolver
+  (`resolve_result_path`) memetakan artefak ke `result_*.json` pasangannya,
+  jadi payload tidak perlu memuat JSON hasil yang besar. Artefak yang sudah
+  terhapus tetap bisa dipetakan selama `result_*.json` pasangannya ada.
 - Backend-uvip menerima path tersebut lewat callback dan menyimpannya di
   `segmentation_results.original_image_url` / `video_output_segmentations.original_video_url`.
 
@@ -171,8 +200,8 @@ flowchart LR
 |---|---|
 | `GET /health` | Build stamp, GPU/CPU, RAM, sisa disk, batas thread, hasil self-test |
 | `GET /health/ffmpeg` | Binary mana yang benar-benar bisa encode H.264, lewat filter apa |
-| `GET /ai/task/{id}` | Progres: `phase`, `frames_processed`, `total_frames` |
-| `GET /ai/result/{id}` | Hasil akhir + `video_codec` + `video_playable_in_browser` |
+| `GET /ai/process-video/status/{id}` | Progres: `phase`, `frames_processed`, `total_frames` |
+| `GET /ai/process-video/result/{id}` | Hasil akhir + `video_codec` + `video_playable_in_browser` |
 
 Kalau encode gagal, folder frame JPG **tidak dihapus** supaya bisa diperiksa,
 dan pesan error memuat detail ffmpeg yang gagal.
