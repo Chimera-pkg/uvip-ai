@@ -64,27 +64,36 @@ curl -X POST "http://localhost:8000/llm/vision" \
     -F "prompt=Jelaskan kondisi jalan pada gambar ini."
 # Halaman uji (bisa di-embed via iframe): http://localhost:8000/llm/
 
-# Foto + metrik UVI -> rekomendasi perbaikan (3 peran) + prompt gambar (JSON)
+# Foto + metrik UVI -> rekomendasi perbaikan (persona "umum") + prompt gambar (JSON)
 curl -X POST "http://localhost:8000/llm/advise" \
     -F "file=@data/extracted/photos/KAYUTANGAN/KAYUTANGAN_BS-01.jpg" \
     -F 'location=Alun-Alun Merdeka, Malang' \
     -F 'metrics={"vegetation_coverage_index":0.3477,"sky_openness_index":0.0223,"walkability_ratio":0.0238}' \
-    -F 'scores={"beauty_score":4.2,"safety_score":3.1,"comfort_score":2.9,"uvi_score":0.36}'
-# Balasan: field "advice" = objek terstruktur (diagnosis, masalah, rekomendasi,
-# prompt_gambar, before_after, caveat). Semua parameter selain "file" opsional —
-# tanpa metrics/scores, analisa dilakukan murni dari foto.
+    -F 'scores={"beauty_score":4.2,"safety_score":3.1,"comfort_score":2.9,"uvi_score":0.36}' \
+    -F 'weights={"vegetation_coverage_index":0.6,"building_visibility_index":0.2}'
+# Balasan: field "advice" = objek terstruktur (diagnosis, masalah, rekomendasi
+# objektif persona "umum", prompt_gambar, before_after, caveat). Semua parameter
+# selain "file" opsional. "weights" (JSON 5 bobot prioritas 0..1) mengurutkan
+# rekomendasi; kosong = otomatis/seimbang. 5 dimensi: building_visibility_index,
+# vegetation_coverage_index, sky_openness_index, building_coverage_pct,
+# ground_accessibility_index.
 
 # Generate ulang foto + saran dari hasil /ai/process (OpenAI Images API)
 curl -X POST "http://localhost:8000/llm/generate" \
     -F "result=/uploads/results/result_76117d88-42d0-4766-a2b8-97fbc4a80ecc_1ee5f69f-62d9-45f7-9db0-96f5d8aac6a4_1792582425737.json" \
+    -F "photo_path=uploads/originals/76117d88-42d0-4766-a2b8-97fbc4a80ecc_1ee5f69f-62d9-45f7-9db0-96f5d8aac6a4.jpg" \
     -F "size=1024x1024"
 # "result" menerima result_url/result_path dari respons /ai/process,
 # path artefak (mask/seg/overlay) di uploads/, path file result_*.json,
 # ATAU JSON inline. Klien hanya kirim path - file sudah ada di server AI.
+# Bila foto RAW tersedia (photo_path / original_image_url di result), endpoint
+# memakai EDIT image (/v1/images/edits) -> struktur bangunan, pondasi, tata
+# letak, dan sudut kamera dipertahankan; tanpa RAW -> fallback text-to-image.
 # Balasan: generated_image_url (PNG di uploads/generated/), raw_image_url,
-# suggestions (kalimat saran, bukan LLM), prompt_image, elapsed_ms.
-# Butuh OPENAI_API_KEY di .env. Model default gpt-image-1; size valid
-# 1024x1024 | 1536x1024 | 1024x1536. Parameter "prompt" opsional untuk override.
+# suggestions (kalimat saran, bukan LLM), prompt_image, image_mode
+# ("edit"|"generate"), elapsed_ms. Butuh OPENAI_API_KEY di .env. Model default
+# gpt-image-1.5; size valid 1024x1024 | 1536x1024 | 1024x1536.
+# Parameter "prompt" opsional untuk override.
 
 # Segmentasi + skor (tanpa LLM)
 curl -X POST "http://localhost:8000/ai/process" \
@@ -178,6 +187,11 @@ form klien) atau `none`.
 | POST | `/ai/process` | foto → masking + segmentasi + skor (tanpa LLM) |
 | POST | `/ai/advise` | `/ai/process` + rekomendasi LLM dalam satu langkah |
 | GET | `/ai/geojson/results` | `FeatureCollection` dari `uploads/results/result_*.json` |
+| GET | `/ai/scoring/schema` | definisi slider tuning + default + preset profil |
+| GET/POST | `/ai/scoring/profiles` | daftar / simpan profil tuning |
+| GET/DELETE | `/ai/scoring/profiles/{name}` | detail / hapus profil tuning |
+| POST | `/ai/scoring/preview` | 8 indeks → 4 skor (tanpa GPU) |
+| POST | `/ai/scoring/evaluate` | sebaran skor 431 foto referensi untuk satu tuning |
 | POST | `/ai/process-video` | video → segmentasi per frame (async, balikan `task_id`) |
 | GET | `/ai/process-video/status/{task_id}` | progres task video |
 | GET | `/ai/process-video/result/{task_id}` | hasil task video |
@@ -194,7 +208,8 @@ form klien) atau `none`.
 
 ### `POST /ai/process`
 
-Multipart: `file` (wajib), `photo_id`, `latitude`, `longitude` (opsional).
+Multipart: `file` (wajib), `photo_id`, `latitude`, `longitude`, `tuning`,
+`profile` (opsional).
 
 ```json
 {
@@ -264,10 +279,55 @@ Multipart: `file` (wajib), `photo_id`, `latitude`, `longitude` (opsional).
 melaporkan posisi pengunggah (bisa di kota lain), bukan lokasi pemotretan.
 `captured_at` juga dari EXIF (`DateTimeOriginal`), bukan waktu upload.
 
+### Tuning skor (`/ai/scoring`)
+
+Skor dihitung dari 8 indeks, jadi bisa diubah tanpa infer ulang. Bentuk tuning:
+
+```json
+{
+  "weights": {"vegetation_coverage_index": 0.45},
+  "blend": {"safety": {"ground_accessibility_index": 0.7}},
+  "anchors": {"pvi": {"min": 0.263, "max": 0.382}},
+  "scale": {"min": 1, "max": 10}
+}
+```
+
+Semua field opsional. Tiap kelompok bobot dinormalisasi ke jumlah 1.0 sebelum
+dipakai (slider maksimum 1.0 per nilai); anchor wajib `min < max` dan skala
+`min < max` dengan rentang minimal 1.0. Tanpa `tuning`/`profile`, hasilnya
+identik dengan default.
+
+```bash
+# Simpan sebagai profil bernama
+curl -X POST http://localhost:8000/ai/scoring/profiles \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"vegetasi_tinggi","tuning":{"weights":{"vegetation_coverage_index":0.45}}}'
+
+# Pakai profil di proses foto: respons memuat blok audit `scoring` dan
+# `perception_prediction_baseline` (skor default) sebagai pembanding
+curl -X POST http://localhost:8000/ai/process \
+  -F "file=@photo.jpg" -F "profile=vegetasi_tinggi"
+
+# Preview skor dari 8 indeks / sebaran 431 foto
+curl -X POST http://localhost:8000/ai/scoring/preview \
+  -H 'Content-Type: application/json' \
+  -d '{"indices":{"vegetation_coverage_index":0.4},"profile":"vegetasi_tinggi"}'
+curl -X POST http://localhost:8000/ai/scoring/evaluate \
+  -H 'Content-Type: application/json' -d '{"profile":"vegetasi_tinggi"}'
+```
+
+Profil yang tidak ada → `404`; tuning tidak valid (`min >= max`, bobot di luar
+0..1, key tidak dikenal, nama profil tidak aman) → `422`. `GET
+/ai/scoring/schema` adalah sumber tunggal untuk label, rentang, dan default
+slider (dipakai `demo.html`). Panel `/llm/` di demo sudah menyediakan pilihan
+profil + upload foto untuk `/ai/process`, dan mengisi kotak 8 indeks dengan
+hasil foto asli untuk preview/evaluate.
+
 ### `POST /ai/advise`
 
 Multipart: `file` (wajib), `photo_id`, `latitude`, `longitude`, `location`,
-`context`, `model`, `detail` (`low|high`, default `high`).
+`context`, `model`, `detail` (`low|high`, default `high`), `tuning`, `profile`,
+`weights` (JSON 5 bobot prioritas 0..1, opsional — mengurutkan rekomendasi).
 
 Respons = **respons `/ai/process` + dua field tambahan**:
 
@@ -285,21 +345,21 @@ Respons = **respons `/ai/process` + dua field tambahan**:
     ],
     "rekomendasi": [
       {
-        "peran": "perencana_kota",
+        "peran": "umum",
         "tindakan": "Tetapkan jalur pejalan menerus sisi arcade, lebar efektif minimum 2 m bebas hambatan, dan jadwalkan relokasi kabel udara pada segmen heritage.",
         "standar": "Permen PUPR 03/2014 tentang Pedoman Perencanaan, Penyediaan, dan Pemanfaatan Prasarana dan Sarana Jaringan Pejalan Kaki",
         "dampak": "menaikkan comfort_score",
         "prioritas": 1
       }
     ],
-    "prompt_gambar": "Redesign this street, add more trees and greenery, …",
+    "prompt_gambar": "Redesign this street, add more trees and greenery, keep all building structures and camera view unchanged …",
     "before_after": {"before": "…", "after": "…"},
     "caveat": "Analisa hanya dari 1 foto tanpa data 3D, topografi, volume lalu lintas, atau survei lapangan, sehingga rekomendasi masih hipotesis yang perlu verifikasi lapangan."
   },
   "advice_context": {
-    "upstream": "https://9router-production-fc96.up.railway.app/v1",
-    "model": "grok-4.6",
-    "requested_model": "lo/glm-5.3-flash",
+    "upstream": "https://api.deepseek.com/v1",
+    "model": "deepseek-flash",
+    "requested_model": "deepseek-flash",
     "elapsed_ms": 60477,
     "parse_ok": true,
     "repair_used": false,
@@ -360,8 +420,8 @@ atas hanya untuk mode lokal tanpa DB.
 ### `POST /llm/generate`
 
 Multipart: `result` (wajib — `result_url`/`result_path`, path artefak di
-`uploads/`, atau JSON inline), `photo_path` (opsional), `size`, `prompt`,
-`count`, `model`.
+`uploads/`, atau JSON inline), `photo_path` (opsional, untuk EDIT image),
+`size`, `prompt`, `count`, `model`.
 
 ```json
 {
@@ -379,9 +439,10 @@ Multipart: `result` (wajib — `result_url`/`result_path`, path artefak di
     "Buka pandangan langit dari 1.2% dengan merapikan kanopi pohon dan meniadakan papan iklan yang menghalangi.",
     "Perlebar dan sambungkan trotoar (saat ini 7.8% dari komposisi) agar aman dan nyaman bagi pejalan kaki."
   ],
-  "prompt_image": "Redesign this street, add more trees and greenery, open up the sky view, …",
+  "prompt_image": "Redesign this street, add more trees and greenery, open up the sky view, keep all building structures, foundations, layout and the camera point of view unchanged …",
   "revised_prompt": null,
-  "image_model": "gpt-image-1",
+  "image_mode": "edit",
+  "image_model": "gpt-image-1.5",
   "size": "1024x1024",
   "count": 1,
   "elapsed_ms": 68864,

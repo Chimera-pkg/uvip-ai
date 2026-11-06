@@ -172,12 +172,15 @@ def _is_retryable(msg: str) -> bool:
 
 async def _call_upstream(*, model: str, messages: list, max_tokens: int,
                          temperature: Optional[float], extra: Optional[dict] = None,
-                         timeout_s: Optional[float] = None) -> dict:
+                         timeout_s: Optional[float] = None,
+                         url: Optional[str] = None,
+                         key: Optional[str] = None) -> dict:
     """Panggil upstream /chat/completions (non-stream). Raise HTTPException bila gagal.
 
     ``timeout_s`` menimpa timeout global - dipakai /llm/advise supaya model yang
-    menggantung (mis. glm-5.3-flash >120s pada prompt tanpa metrik) cepat
-    menyerah dan rantai berlanjut ke fallback.
+    menggantung cepat menyerah dan rantai berlanjut ke fallback.
+    ``url``/``key`` menimpa endpoint utama - dipakai rantai fallback endpoint
+    kedua (Cartethyia) untuk jalur teks.
     """
     body: dict = {"model": model, "messages": messages, "max_tokens": max_tokens,
                   # WAJIB false: tanpa ini upstream membalas event-stream berisi
@@ -188,11 +191,17 @@ async def _call_upstream(*, model: str, messages: list, max_tokens: int,
     if extra:
         body.update(extra)
 
+    base = (url or _base_url()).rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    auth_key = key if key is not None else settings.nine_router_key
+    if auth_key:
+        headers["Authorization"] = f"Bearer {auth_key}"
+
     t0 = time.time()
     try:
         async with httpx.AsyncClient(timeout=timeout_s or settings.nine_router_timeout_s) as client:
-            res = await client.post(f"{_base_url()}/chat/completions",
-                                    headers=_headers(), json=body)
+            res = await client.post(f"{base}/chat/completions",
+                                    headers=headers, json=body)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502,
                             detail=f"upstream tidak terjangkau: {type(exc).__name__}: {exc}")
@@ -235,11 +244,24 @@ async def _call_upstream(*, model: str, messages: list, max_tokens: int,
     }
 
 
+def _fallback_endpoint() -> tuple[Optional[str], Optional[str]]:
+    """(url, key) endpoint fallback kedua, atau (None, None) bila tak dikonfigurasi."""
+    url = (settings.nine_router_fallback_url or "").strip()
+    key = (settings.nine_router_fallback_key or "").strip()
+    if not url:
+        return None, None
+    return url, key
+
+
 async def _ask(*, model: str, messages: list, max_tokens: int,
                temperature: Optional[float]) -> dict:
-    """Coba model utama, lalu fallback berurutan bila errornya retryable."""
-    # Dedupe tapi pertahankan urutan (dict sebagai ordered set).
-    chain = list(dict.fromkeys([model, *_fallbacks()]))
+    """Coba model utama, lalu fallback endpoint kedua (jalur TEKS).
+
+    Model utama dicoba pada `nine_router_url`; bila gagal, `_fallbacks()`
+    dicoba pada `nine_router_fallback_url` (bila dikonfigurasi). Jalur vision
+    TIDAK memakai ini karena fallback teks tidak bisa membaca gambar.
+    """
+    chain = list(dict.fromkeys([model]))
     last: Optional[HTTPException] = None
     for m in chain:
         try:
@@ -250,6 +272,20 @@ async def _ask(*, model: str, messages: list, max_tokens: int,
         except HTTPException as exc:
             last = exc
             logger.warning("[llm] model=%s gagal: %s", m, exc.detail)
+    # Endpoint kedua (fallback) - khusus teks.
+    fb_url, fb_key = _fallback_endpoint()
+    for m in _fallbacks():
+        if not fb_url:
+            break
+        try:
+            out = await _call_upstream(model=m, messages=messages,
+                                       max_tokens=max_tokens, temperature=temperature,
+                                       url=fb_url, key=fb_key)
+            out["requested_model"] = model
+            return out
+        except HTTPException as exc:
+            last = exc
+            logger.warning("[llm] fallback model=%s gagal: %s", m, exc.detail)
     assert last is not None
     raise last
 
@@ -355,9 +391,10 @@ async def _ask_vision(*, model: str, prompt: str, system: Optional[str],
         ],
     })
     # Model vision dipisah dari model teks: fallback teks belum tentu bisa
-    # membaca gambar, jadi rantai di sini dibangun dari _fallbacks() yang sama
-    # tapi model utamanya = NINE_ROUTER_VISION_MODEL.
-    chain = list(dict.fromkeys([model, *_fallbacks()]))
+    # membaca gambar. deepseek-flash adalah satu-satunya model "flash" yang
+    # vision-capable, jadi rantai di sini TIDAK memakai _fallbacks() (yang
+    # khusus teks dan diarahkan ke endpoint kedua).
+    chain = list(dict.fromkeys([model]))
     last: Optional[HTTPException] = None
     for m in chain:
         try:
@@ -718,14 +755,34 @@ ADVISE_METRIC_KEYS = (
     "heritage_dominance_index",
 )
 
+# 5 dimensi yang bisa dibobot user (slider prioritas, 0..1) untuk mengarahkan
+# rekomendasi AI. Kunci pakai nama metrik; bobot tinggi = dimensi diprioritaskan.
+# Ini satu-satunya sumber kebenaran untuk slider "prioritas" di demo.
+ADVISE_WEIGHT_KEYS = (
+    "building_visibility_index",   # Indeks visibilitas bangunan
+    "vegetation_coverage_index",   # Indeks tutupan vegetasi
+    "sky_openness_index",          # Indeks keterbukaan langit
+    "building_coverage_pct",       # Indeks dominasi bangunan (building coverage)
+    "ground_accessibility_index",  # Indeks aksesibilitas trotoar
+)
+ADVISE_WEIGHT_LABELS = {
+    "building_visibility_index": "Visibilitas bangunan",
+    "vegetation_coverage_index": "Tutupan vegetasi",
+    "sky_openness_index": "Keterbukaan langit",
+    "building_coverage_pct": "Dominasi bangunan",
+    "ground_accessibility_index": "Aksesibilitas trotoar",
+}
+
 # System prompt domain. Ditulis eksplisit supaya output konsisten JSON dan
 # rekomendasinya spesifik (mengutip angka), bukan saran generik "perbanyak pohon".
 _ADVISE_SYSTEM = """Anda analis ruang publik perkotaan Indonesia (jalan, trotoar, alun-alun).
 Anda menerima FOTO + metrik kuantitatif hasil segmentasi semantik (persentase kelas
-dan indeks 0..1) + 4 skor persepsi (beauty/safety/comfort/uvi, skala 1..10 dan 0..1).
+dan indeks 0..1) + 4 skor persepsi (beauty/safety/comfort/uvi, skala 1..10 dan 0..1),
+dan kadang BOBOT PRIORITAS (5 dimensi, 0..1) yang dipilih pengguna.
 
 TUGAS: baca foto, kaitkan dengan angkanya, lalu beri rekomendasi perbaikan yang
-SPESIFIK dan bisa dieksekusi oleh 3 peran: perencana kota, insinyur sipil, arsitek.
+SPESIFIK dan objektif untuk publik umum (bukan dibagi per profesi). Sudut pandang
+satu: "apa yang perlu diperbaiki agar ruang ini lebih baik untuk semua orang".
 
 ATURAN KETAT
 1. Balas HANYA satu objek JSON valid. Tanpa kalimat pembuka, tanpa pagar markdown.
@@ -737,18 +794,21 @@ ATURAN KETAT
 5. "standar" diisi acuan teknis Indonesia bila yakin (mis. Permen PUPR 03/2014 tentang
    Pedoman Perencanaan Penyediaan dan Pemanfaatan Prasarana dan Sarana Jaringan Pejalan
    Kaki; SNI 03-6967-2003 tentang Trotoar). Kalau tidak yakin, tulis "" (string kosong).
-6. "prompt_gambar" = prompt BAHASA INGGRIS untuk text-to-image (Midjourney/SDXL),
-   memuat: jenis ruang, material, vegetasi, pencahayaan, sudut kamera, dan gaya.
-   Tuliskan kondisi IDEAL (perbaikan sudah dilakukan), bukan kondisi saat ini.
-7. "caveat" wajib diisi: sebutkan bahwa analisa hanya dari 1 foto (tanpa data 3D,
+6. Kalau BOBOT PRIORITAS diberikan: urutkan "rekomendasi" dari bobot tertinggi ke
+   terendah, dan pertebal saran pada dimensi berbobot besar. Dimensi berbobot 0 boleh
+   diabaikan. Sebutkan di "diagnosis" dimensi mana yang jadi prioritas.
+7. "prompt_gambar" = prompt BAHASA INGGRIS untuk EDIT gambar (image-to-image), memuat:
+   jenis ruang, material, vegetasi, pencahayaan. WAJIB menyertakan penegasan bahwa
+   struktur bangunan/pondasi, tata letak, dan sudut kamera TIDAK berubah; hanya
+   [elemen yang diubah] yang diubah. Tulis kondisi IDEAL (perbaikan sudah dilakukan).
+8. "caveat" wajib diisi: sebutkan bahwa analisa hanya dari 1 foto (tanpa data 3D,
    topografi, volume lalu lintas, atau survei lapangan) sehingga rekomendasi masih
    hipotesis yang perlu verifikasi lapangan.
-8. Kalau metrik tidak diberikan, nilai murni dari foto dan tulis itu di "caveat".
-9. RINGKAS - ini penting supaya balasan tidak terpotong:
+9. Kalau metrik tidak diberikan, nilai murni dari foto dan tulis itu di "caveat".
+10. RINGKAS - ini penting supaya balasan tidak terpotong:
    - "diagnosis": maksimal 3 kalimat.
    - "masalah": maksimal 4 item, tiap "temuan" maksimal 25 kata.
-   - "rekomendasi": tepat 3 item (satu per peran: perencana_kota, insinyur_sipil, arsitek),
-     tiap "tindakan" maksimal 40 kata.
+   - "rekomendasi": tepat 3 item objektif, tiap "tindakan" maksimal 40 kata.
    - "prompt_gambar": satu paragraf, maksimal 70 kata.
    - Jangan mengulang isi field di field lain.
 
@@ -759,9 +819,9 @@ SKEMA (semua field wajib ada; isi [] bila memang tidak ada):
     {"area": "trotoar", "temuan": "...", "bukti_angka": "walkability_ratio 0.024", "tingkat": "tinggi|sedang|rendah"}
   ],
   "rekomendasi": [
-    {"peran": "perencana_kota", "tindakan": "...", "standar": "...", "dampak": "menaikkan safety_score", "prioritas": 1}
+    {"peran": "umum", "tindakan": "...", "standar": "...", "dampak": "menaikkan safety_score", "prioritas": 1}
   ],
-  "prompt_gambar": "English text-to-image prompt describing the improved street",
+  "prompt_gambar": "English image-edit prompt keeping building structure and camera view unchanged",
   "before_after": "narasi singkat perubahan yang diharapkan",
   "caveat": "..."
 }
@@ -787,8 +847,8 @@ def _advice_schema_ok(obj: dict) -> tuple[bool, str]:
     recs = obj.get("rekomendasi")
     if not isinstance(recs, list) or not recs:
         return False, "'rekomendasi' harus array tidak kosong"
-    # Tiap rekomendasi WAJIB objek ber-`peran` - inilah yang membuat sarannya
-    # bisa dipisah per disiplin (perencana kota / insinyur sipil / arsitek).
+    # Tiap rekomendasi WAJIB objek ber-`peran` (= "umum") - menjamin item
+    # valid dan urut prioritas bisa dirender klien.
     for i, item in enumerate(recs):
         if not isinstance(item, dict):
             return False, f"rekomendasi[{i}] harus objek, bukan {type(item).__name__}"
@@ -798,20 +858,23 @@ def _advice_schema_ok(obj: dict) -> tuple[bool, str]:
     return True, ""
 
 def _advise_chain(model: str) -> list:
-    """Rantai model untuk /llm/advise: model utama lalu fallback vision-capable.
+    """Rantai model untuk /llm/advise: model utama lalu `NINE_ROUTER_VISION_MODEL`.
 
-    Fallback teks biasa belum tentu bisa membaca gambar, jadi rantai di sini
-    memakai `NINE_ROUTER_VISION_MODEL` sebagai cadangan pertama (bukan
-    `NINE_ROUTER_MODEL`), baru `_fallbacks()`.
+    Fallback teks biasa belum tentu bisa membaca gambar. deepseek-flash adalah
+    satu-satunya model "flash" vision-capable, jadi rantai ini TIDAK memakai
+    `_fallbacks()` (khusus teks, endpoint kedua).
     """
-    return list(dict.fromkeys([model, settings.nine_router_vision_model, *_fallbacks()]))
+    return list(dict.fromkeys([model, settings.nine_router_vision_model]))
 
 def _advise_prompt(*, metrics: Optional[dict], scores: Optional[dict],
-                   location: Optional[str], extra: Optional[str]) -> str:
+                   location: Optional[str], extra: Optional[str],
+                   weights: Optional[dict] = None) -> str:
     """Susun pesan user: metrik + skor + lokasi sebagai konteks teks untuk LLM.
 
     Angka inilah yang membuat rekomendasi spesifik ("trotoar hanya 2,4% dari
-    lebar jalan") alih-alih generik ("perbanyak trotoar").
+    lebar jalan") alih-alih generik ("perbanyak trotoar"). ``weights`` (opsional)
+    = bobot prioritas 5 dimensi (0..1) yang dipilih pengguna; LLM mengurutkan
+    rekomendasinya mengikuti bobot.
     """
     lines = ["Analisa foto ruang publik berikut dan berikan rekomendasi perbaikan."]
     if location:
@@ -830,6 +893,17 @@ def _advise_prompt(*, metrics: Optional[dict], scores: Optional[dict],
         for k, v in scores.items():
             if not str(k).startswith("_"):
                 lines.append(f"  - {k}: {v}")
+    if weights:
+        lines.append("\nBOBOT PRIORITAS (0..1, dari pengguna) - urutkan rekomendasi "
+                     "dari bobot tertinggi:")
+        for k in ADVISE_WEIGHT_KEYS:
+            if k in weights:
+                label = ADVISE_WEIGHT_LABELS.get(k, k)
+                try:
+                    w = float(weights[k])
+                except (TypeError, ValueError):
+                    w = 0.0
+                lines.append(f"  - {label} ({k}): {w:.3f}")
     if extra:
         lines.append(f"\nKonteks tambahan: {extra}")
     if not metrics and not scores:
@@ -905,7 +979,7 @@ async def _ask_advise(*, model: str, prompt: str, image_bytes: bytes,
                                 "satu objek JSON dengan bentuk PERSIS begini (tipe harus sama):\n"
                                 '{"diagnosis":"teks","masalah":[{"area":"teks","temuan":"teks",'
                                 '"bukti_angka":"teks","tingkat":"tinggi|sedang|rendah"}],'
-                                '"rekomendasi":[{"peran":"perencana_kota|insinyur_sipil|arsitek",'
+                                '"rekomendasi":[{"peran":"umum",'
                                 '"tindakan":"teks","standar":"teks","dampak":"teks","prioritas":1}],'
                                 '"prompt_gambar":"English prompt","before_after":"teks",'
                                 '"caveat":"teks"}\n'
@@ -940,6 +1014,7 @@ def result_context(result: dict) -> tuple[dict, dict]:
 async def advise_photo(*, image_bytes: bytes, filename: Optional[str] = None,
                        media_type: Optional[str] = None,
                        metrics: Optional[dict] = None, scores: Optional[dict] = None,
+                       weights: Optional[dict] = None,
                        location: Optional[str] = None, context: Optional[str] = None,
                        model: Optional[str] = None, max_tokens: Optional[int] = None,
                        temperature: Optional[float] = None,
@@ -953,7 +1028,7 @@ async def advise_photo(*, image_bytes: bytes, filename: Optional[str] = None,
         raise HTTPException(status_code=400, detail="parameter 'detail' harus auto|low|high")
     media_type = media_type or _vision_media_type(filename, None)
     prompt = _advise_prompt(metrics=metrics, scores=scores,
-                            location=location, extra=context)
+                            location=location, extra=context, weights=weights)
     out = await _ask_advise(
         model=(model or "").strip() or settings.nine_router_advise_model,
         prompt=prompt,
@@ -981,6 +1056,7 @@ async def advise_photo(*, image_bytes: bytes, filename: Optional[str] = None,
         },
         "metrics_provided": sorted(metrics) if metrics else [],
         "scores_provided": sorted(scores) if scores else [],
+        "weights_provided": sorted(weights) if weights else [],
         "location": location,
     }
     return out
@@ -991,6 +1067,7 @@ async def llm_advise(
     file: UploadFile = File(..., description="Berkas gambar: jpg/jpeg/png/webp/gif/bmp"),
     metrics: Optional[str] = Form(None, description="JSON metrik segmentasi (opsional)"),
     scores: Optional[str] = Form(None, description="JSON 4 skor UVI (opsional)"),
+    weights: Optional[str] = Form(None, description="JSON 5 bobot prioritas 0..1 (opsional)"),
     location: Optional[str] = Form(None, description="Nama/koordinat lokasi (opsional)"),
     context: Optional[str] = Form(None, description="Konteks tambahan (opsional)"),
     model: Optional[str] = Form(None),
@@ -1002,14 +1079,15 @@ async def llm_advise(
 
     Bedanya dengan `/llm/vision` (yang sekadar mendeskripsikan gambar): endpoint
     ini **wajib** membalas JSON berisi diagnosis, daftar masalah, rekomendasi
-    untuk 3 peran (perencana kota / insinyur sipil / arsitek), plus `prompt_gambar`
-    bahasa Inggris yang siap ditempel ke text-to-image (Midjourney/SDXL) untuk
-    memvisualkan kondisi ideal.
+    objektif (persona "umum"), plus `prompt_gambar` bahasa Inggris untuk EDIT
+    gambar (image-to-image) yang memvisualkan kondisi ideal tanpa mengubah
+    struktur bangunan dan sudut kamera.
 
-    `metrics` & `scores` dikirim sebagai string JSON, mis:
+    `metrics`, `scores` & `weights` dikirim sebagai string JSON, mis:
         metrics={"vegetation_coverage_index":0.3477,"sky_openness_index":0.0223,...}
         scores={"beauty_score":4.2,"safety_score":3.1,"comfort_score":2.9,"uvi_score":0.36}
-    Semua opsional; tanpa keduanya analisa dilakukan murni dari foto.
+        weights={"vegetation_coverage_index":0.5,"sky_openness_index":0.2,...}
+    Semua opsional; tanpa ketiganya analisa dilakukan murni dari foto.
     """
     media_type = _vision_media_type(file.filename, file.content_type)
     image_bytes = await _read_vision_upload(file)
@@ -1028,12 +1106,32 @@ async def llm_advise(
             raise HTTPException(status_code=400, detail=f"parameter '{name}' harus objek JSON")
         return val
 
+    weights_raw = _load_json(weights, "weights")
+    if weights_raw:
+        # Terima hanya 5 dimensi yang dikenal; buang yang tak dikenal supaya
+        # LLM tidak menerima key asing, dan clamp 0..1.
+        clean_weights: dict = {}
+        for k in ADVISE_WEIGHT_KEYS:
+            v = weights_raw.get(k)
+            if v is None:
+                continue
+            try:
+                clean_weights[k] = min(max(float(v), 0.0), 1.0)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400,
+                                    detail=f"weights['{k}'] harus angka 0..1")
+        if clean_weights:
+            weights_raw = clean_weights
+        else:
+            weights_raw = None
+
     out = await advise_photo(
         image_bytes=image_bytes,
         filename=file.filename,
         media_type=media_type,
         metrics=_load_json(metrics, "metrics"),
         scores=_load_json(scores, "scores"),
+        weights=weights_raw,
         location=location,
         context=context,
         model=model,
@@ -1069,7 +1167,7 @@ async def llm_advise(
 
 # ─── POST /llm/generate: baca hasil /ai/process -> generate ulang foto ───
 
-# Ukuran valid gpt-image-1 (resmi OpenAI).
+# Ukuran valid gpt-image-1.5 (resmi OpenAI).
 _OPENAI_IMAGE_SIZES = ("1024x1024", "1536x1024", "1024x1536")
 
 
@@ -1152,7 +1250,9 @@ def _simple_image_prompt(target: dict) -> str:
         ph.append("provide more building setbacks")
     if len(ph) == 1:  # pastikan selalu ada aksi
         ph.append("improve the overall street environment")
-    ph.append("keeping the same point of view and composition, photorealistic")
+    ph.append("keep all building structures, foundations, layout and the camera "
+              "point of view unchanged; only modify the mentioned elements; "
+              "photorealistic")
     return ", ".join(ph) + "."
 
 
@@ -1217,6 +1317,9 @@ def _simple_suggestions(target: dict) -> list:
 _MEDIA_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif",
                    ".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
+# Khusus EDIT gambar: hanya format foto, bukan video.
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+
 
 def _raw_image_url(photo_path: Optional[str]) -> Optional[str]:
     """URL publik foto mentah; None kalau file tidak ada / di luar uploads/."""
@@ -1229,6 +1332,19 @@ def _raw_image_url(photo_path: Optional[str]) -> Optional[str]:
     if path.suffix.lower() not in _MEDIA_SUFFIXES:
         return None
     return upload_url(path) if path.is_file() else None
+
+
+def _raw_image_path(photo_path: Optional[str]) -> Optional[Path]:
+    """Path file raw (untuk EDIT image) atau None bila tak tersedia/harusnya video."""
+    if not photo_path:
+        return None
+    try:
+        path = resolve_upload_path(photo_path)
+    except (ValueError, PermissionError):
+        return None
+    if path.suffix.lower() not in _IMAGE_SUFFIXES:
+        return None
+    return path if path.is_file() else None
 
 
 def _load_target_json(result: str) -> dict:
@@ -1290,7 +1406,7 @@ def _target_stem(target: dict, photo_path: Optional[str]) -> str:
 
 async def _openai_generate_image(*, prompt: str, model: str, size: str,
                                  count: int) -> dict:
-    """Panggil OpenAI Images API (gpt-image-1), minta base64.
+    """Panggil OpenAI Images API (gpt-image-1.5), minta base64.
 
     Kembalikan {"items": [{"b64_json":..., "revised_prompt":...}], ...}.
     """
@@ -1300,7 +1416,7 @@ async def _openai_generate_image(*, prompt: str, model: str, size: str,
                             detail="OPENAI_API_KEY kosong - set di .env lalu restart")
     url = "https://api.openai.com/v1/images/generations"
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-    # CATATAN: gpt-image-1 SELALU mengembalikan b64_json dan MENOLAK parameter
+    # CATATAN: gpt-image-1.5 SELALU mengembalikan b64_json dan MENOLAK parameter
     # `response_format` (400 unknown_parameter). Jangan tambahkan lagi.
     payload = {"model": model, "prompt": prompt, "n": count, "size": size}
     try:
@@ -1328,6 +1444,52 @@ async def _openai_generate_image(*, prompt: str, model: str, size: str,
     return {"items": out, "model": data.get("model", model)}
 
 
+async def _openai_edit_image(*, image_path: Path, prompt: str, model: str,
+                             size: str, count: int) -> dict:
+    """EDIT gambar (image-to-image) pakai OpenAI ``/v1/images/edits``.
+
+    Kirim foto RAW sebagai input sehingga struktur bangunan, pondasi, tata
+    letak, dan sudut kamera dipertahankan — hanya elemen di prompt yang diubah.
+    Bentuk balasan sama dengan ``_openai_generate_image``.
+    """
+    key = settings.openai_api_key.strip()
+    if not key:
+        raise HTTPException(status_code=503,
+                            detail="OPENAI_API_KEY kosong - set di .env lalu restart")
+    url = "https://api.openai.com/v1/images/edits"
+    media_type = _vision_media_type(image_path.name, None)
+    data = {"model": model, "prompt": prompt, "n": str(count), "size": size}
+    files = {"image": (image_path.name, image_path.read_bytes(), media_type)}
+    try:
+        async with httpx.AsyncClient(timeout=settings.openai_image_timeout_s) as client:
+            resp = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {key}"},
+                data=data,
+                files=files,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502,
+                            detail=f"gagal hubungi OpenAI Images edits API: {exc}")
+    if resp.status_code != 200:
+        detail = resp.text[:500]
+        raise HTTPException(status_code=resp.status_code,
+                            detail=f"OpenAI Images edits API {resp.status_code}: {detail}")
+    payload = resp.json()
+    items = payload.get("data") or []
+    if not items:
+        raise HTTPException(status_code=502,
+                            detail="OpenAI Images edits API balasan tanpa data")
+    out = []
+    for it in items:
+        b64 = it.get("b64_json")
+        if not b64:
+            raise HTTPException(status_code=502,
+                                detail="OpenAI Images edits API balasan tanpa b64_json")
+        out.append({"b64_json": b64, "revised_prompt": it.get("revised_prompt", prompt)})
+    return {"items": out, "model": payload.get("model", model)}
+
+
 
 
 
@@ -1336,7 +1498,7 @@ async def llm_generate(
     result: str = Form(..., description="JSON hasil /ai/process, atau path URL file result_*.json di server"),
     photo_path: Optional[str] = Form(None, description="Path gambar raw di server (opsional, untuk raw_image_url)"),
     prompt: Optional[str] = Form(None, description="Override prompt gambar (opsional)"),
-    model: Optional[str] = Form(None, description="Model OpenAI images (default gpt-image-1)"),
+    model: Optional[str] = Form(None, description="Model OpenAI images (default gpt-image-1.5)"),
     size: Optional[str] = Form(None, description="1024x1024 | 1536x1024 | 1024x1536"),
     count: Optional[str] = Form(None, description="Jumlah gambar, 1..4 (default 1)"),
 ):
@@ -1345,9 +1507,11 @@ async def llm_generate(
     1. ``result`` = keluaran POST /ai/process (JSON inline) atau referensi
        path/URL ``result_*.json`` di server -> dibaca variabel UVI/PVI &
        persentase (``perception_prediction``, ``segmentation_results``).
-    2. prompt gambar disusun SESEMPEL MUNGKIN dari angka target.
-    3. OpenAI Images API (gpt-image-1) -> PNG disimpan dengan nama
-       ``img_<stem>_<epoch_ms>.png`` di ``uploads/generated/``.
+    2. prompt gambar disusun SESEMPEL MUNGKIN dari angka target, dan memuat
+       penegasan "struktur bangunan & sudut kamera tidak berubah".
+    3. Bila foto RAW tersedia -> EDIT image (``/v1/images/edits``) supaya
+       pondasi/struktur/POV benar-benar dipertahankan; tanpa RAW -> fallback
+       text-to-image (``/v1/images/generations``).
     4. saran = kalimat bebas (tanpa prioritas) dari angka, bukan LLM => gratis &
        deterministik.
     5. Response berisi ``generated_image_url`` + ``raw_image_url`` + suggestions
@@ -1370,9 +1534,22 @@ async def llm_generate(
         raise HTTPException(status_code=400, detail="count harus 1..4")
 
     image_prompt = (prompt or "").strip() or _simple_image_prompt(target)
+
+    # Foto RAW untuk EDIT image: prioritas `photo_path`, lalu URL artefak asli
+    # dari result (original > segmentation > mask). Tanpa RAW -> generations.
+    raw_path = (_raw_image_path(photo_path)
+                or _raw_image_path(target.get("original_image_url"))
+                or _raw_image_path(target.get("segmentation_url")))
     t0 = time.time()
-    gen = await _openai_generate_image(prompt=image_prompt, model=chosen_model,
-                                       size=chosen_size, count=count_n)
+    if raw_path is not None:
+        gen = await _openai_edit_image(image_path=raw_path, prompt=image_prompt,
+                                       model=chosen_model, size=chosen_size,
+                                       count=count_n)
+        mode = "edit"
+    else:
+        gen = await _openai_generate_image(prompt=image_prompt, model=chosen_model,
+                                           size=chosen_size, count=count_n)
+        mode = "generate"
     stem = _target_stem(target, photo_path)
     paths = [_save_generated(item["b64_json"], stem) for item in gen["items"]]
     saved = [u for u in (upload_url(p) for p in paths) if u]
@@ -1395,6 +1572,7 @@ async def llm_generate(
         "suggestions": _simple_suggestions(target),
         "prompt_image": image_prompt,
         "revised_prompt": gen["items"][0]["revised_prompt"],
+        "image_mode": mode,
         "image_model": chosen_model,
         "size": chosen_size,
         "count": count_n,

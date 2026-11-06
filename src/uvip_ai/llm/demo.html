@@ -20,6 +20,11 @@
   label { color:#8b93a1; font-size:12px; display:block; margin-bottom:4px; }
   a { color:#6ea8fe; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:10px 18px; margin-bottom:12px; }
+  .grid label { margin:0; color:#c3c9d4; font-size:12px; }
+  .grid input[type=range], .grid input[type=number] { width:100%; padding:0; }
+  .grid .val { float:right; color:#6ea8fe; font-variant-numeric: tabular-nums; }
+  .muted { color:#8b93a1; font-size:12px; }
 </style>
 </head>
 <body>
@@ -37,15 +42,17 @@ GET  /llm/health                           -&gt; status upstream
 POST /llm/chat                             -&gt; chat multi-turn (body JSON) -&gt; JSON
 POST /llm/chat/completions                 -&gt; passthrough (stream jalan)
 POST /llm/vision                           -&gt; analisa gambar (multipart) -&gt; JSON
-POST /llm/advise                           -&gt; foto + metrik -&gt; rekomendasi + prompt gambar</pre>
+POST /llm/advise                           -&gt; foto + metrik -&gt; rekomendasi + prompt gambar
+GET  /ai/scoring/schema                    -&gt; definisi slider, bobot, anchor, skala
+POST /ai/scoring/preview                   -&gt; 8 indeks -&gt; skor (tanpa model ML)
+POST /ai/scoring/evaluate                  -&gt; sebaran skor seluruh dataset (431 foto)
+GET/POST/DELETE /ai/scoring/profiles[/{name}] -&gt; profil tuning tersimpan</pre>
 
   <h2>Uji langsung</h2>
   <div class="row">
     <input id="q" value="Bikin 3 rekomendasi nama warung kopi, singkat saja" placeholder="prompt...">
     <select id="model">
-      <option value="lo/deepseek-v4.1-flash">lo/deepseek-v4.1-flash</option>
-      <option value="x/gpt-6-luna">x/gpt-6-luna</option>
-      <option value="gcli/grok-4.6">gcli/grok-4.6</option>
+      <option value="deepseek-flash">deepseek-flash</option>
     </select>
     <button id="go">Kirim</button>
   </div>
@@ -69,9 +76,7 @@ POST /llm/advise                           -&gt; foto + metrik -&gt; rekomendasi
   <div class="row">
     <input id="cprompt" value="Jelaskan apa itu H.264 dengan singkat." placeholder="pertanyaan...">
     <select id="cmodel">
-      <option value="lo/deepseek-v4.1-flash">lo/deepseek-v4.1-flash</option>
-      <option value="x/gpt-6-luna">x/gpt-6-luna</option>
-      <option value="gcli/grok-4.6">gcli/grok-4.6</option>
+      <option value="deepseek-flash">deepseek-flash</option>
     </select>
     <button id="cgo">Kirim</button>
   </div>
@@ -82,14 +87,66 @@ POST /llm/advise                           -&gt; foto + metrik -&gt; rekomendasi
   <div class="row">
     <input type="file" id="afile" accept="image/*">
     <input id="aloc" value="Alun-Alun Merdeka, Malang" placeholder="lokasi...">
-    <button id="ago">Analisa + Rekomendasi</button>
+    <select id="wmode" title="Mode pembobotan">
+      <option value="otomatis">Otomatis (seimbang)</option>
+      <option value="manual">Manual (5 bobot prioritas)</option>
+    </select>
+    <button id="ago">Generate / Regenerate</button>
   </div>
+  <p class="sub" style="margin:0 0 8px">
+    <b>Otomatis</b> = AI memberi rekomendasi seimbang. <b>Manual</b> = geser 5 bobot di
+    bawah untuk memprioritaskan dimensi tertentu, lalu klik lagi untuk <i>regenerate</i>.
+    Setelah "Proses" di panel bawah, kotak metrik &amp; skor otomatis terisi dari foto itu.
+  </p>
+  <div id="wgrid" class="grid" hidden></div>
   <label>Metrik segmentasi (JSON, opsional) — kosongkan untuk analisa murni dari foto</label>
   <input id="amet" style="width:100%" value='{"vegetation_coverage_index":0.3477,"sky_openness_index":0.0223,"ground_accessibility_index":0.1664,"walkability_ratio":0.0238}'>
   <label>Skor persepsi (JSON, opsional)</label>
   <input id="ascore" style="width:100%" value='{"beauty_score":4.2,"safety_score":3.1,"comfort_score":2.9,"uvi_score":0.36}'>
   <label>fetch() multipart -&gt; JSON terstruktur dari POST /llm/advise</label>
   <pre id="aout">—</pre>
+
+  <h2>Uji proses foto (POST /ai/process)</h2>
+  <div class="row">
+    <input type="file" id="pfile" accept="image/*">
+    <input id="plat" placeholder="latitude (opsional)" size="10">
+    <input id="plon" placeholder="longitude (opsional)" size="10">
+    <select id="pprofile"><option value="">— default —</option></select>
+    <button id="pgo">Proses</button>
+  </div>
+  <p class="sub" style="margin:0 0 8px">
+    Profil diambil dari panel tuning di bawah; bila kosong, slider yang sedang aktif
+    dikirim sebagai <code>tuning</code> inline. Segmentasi GPU bisa 20-80 detik.
+  </p>
+  <label>JSON: skor (+ baseline bila tuning aktif), URL artefak, dan 8 indeks foto ini</label>
+  <pre id="pout">—</pre>
+
+  <h2>Tuning skor (PVI v1)</h2>
+  <p class="sub">
+    Ubah bobot/rentang, cek sebaran pada 431 foto, simpan sebagai profil, lalu pakai di
+    <code>/ai/process</code> atau <code>/ai/advise</code> lewat field <code>profile</code>.
+    Tanpa model ML - hanya aritmetika indeks.
+  </p>
+  <div class="row">
+    <select id="tprofile"><option value="">— default —</option></select>
+    <button id="tload">Muat</button>
+    <button id="tdel">Hapus</button>
+    <input id="tname" placeholder="nama profil (A-Za-z0-9_-)">
+    <input id="tdesc" placeholder="deskripsi (opsional)">
+    <button id="tsave">Simpan</button>
+  </div>
+  <div id="tgrid" class="grid"></div>
+  <div class="row">
+    <input id="tindices" style="flex:1 1 460px" placeholder="8 indeks (JSON)">
+    <button id="tprev">Preview 1 foto</button>
+    <button id="teval">Evaluasi 431 foto</button>
+  </div>
+  <p class="muted" style="margin:-6px 0 8px">
+    Nilai awal kotak indeks = contoh median. Setelah tombol "Proses" di panel atas,
+    kotak ini otomatis berisi 8 indeks foto yang baru diproses.
+  </p>
+  <label>POST /ai/scoring/preview &middot; /evaluate -&gt; JSON</label>
+  <pre id="tout">—</pre>
 
 <script>
 const q = document.getElementById('q');
@@ -186,6 +243,52 @@ const amet = document.getElementById('amet');
 const ascore = document.getElementById('ascore');
 const aout = document.getElementById('aout');
 const ago = document.getElementById('ago');
+const wmode = document.getElementById('wmode');
+const wgrid = document.getElementById('wgrid');
+
+// 5 dimensi bobot prioritas (kunci = nama metrik backend, label = tampilan).
+const WEIGHT_KEYS = [
+  ['building_visibility_index', 'Visibilitas bangunan'],
+  ['vegetation_coverage_index', 'Tutupan vegetasi'],
+  ['sky_openness_index', 'Keterbukaan langit'],
+  ['building_coverage_pct', 'Dominasi bangunan'],
+  ['ground_accessibility_index', 'Aksesibilitas trotoar'],
+];
+const wsliders = {}; // key -> { el, val }
+
+function renderWeights() {
+  wgrid.textContent = '';
+  for (const [key, label] of WEIGHT_KEYS) {
+    const wrap = document.createElement('div');
+    const lab = document.createElement('label');
+    lab.textContent = label + ' ';
+    const val = document.createElement('b');
+    val.className = 'val';
+    val.textContent = '0.20';
+    lab.appendChild(val);
+    const el = document.createElement('input');
+    el.type = 'range'; el.min = '0'; el.max = '1'; el.step = '0.05'; el.value = '0.2';
+    el.addEventListener('input', () => {
+      val.textContent = Number(el.value).toFixed(2);
+    });
+    wrap.append(lab, el);
+    wgrid.appendChild(wrap);
+    wsliders[key] = { el, val };
+  }
+}
+
+function currentWeights() {
+  const w = {};
+  for (const [key] of WEIGHT_KEYS) w[key] = Number(wsliders[key].el.value);
+  return w;
+}
+
+function syncWeightMode() {
+  wgrid.hidden = wmode.value !== 'manual';
+}
+wmode.addEventListener('change', syncWeightMode);
+renderWeights();
+syncWeightMode();
 
 async function advise() {
   if (!afile.files.length) { aout.textContent = 'Pilih gambar dulu.'; return; }
@@ -195,6 +298,7 @@ async function advise() {
   if (aloc.value.trim()) fd.append('location', aloc.value.trim());
   if (amet.value.trim()) fd.append('metrics', amet.value.trim());
   if (ascore.value.trim()) fd.append('scores', ascore.value.trim());
+  if (wmode.value === 'manual') fd.append('weights', JSON.stringify(currentWeights()));
   try {
     const res = await fetch('/llm/advise', { method: 'POST', body: fd });
     const data = await res.json();
@@ -216,6 +320,365 @@ async function advise() {
 }
 
 ago.addEventListener('click', advise);
+
+// --- Uji /ai/process -------------------------------------------------------
+const pfile = document.getElementById('pfile');
+const plat = document.getElementById('plat');
+const plon = document.getElementById('plon');
+const pprofile = document.getElementById('pprofile');
+const pout = document.getElementById('pout');
+const pgo = document.getElementById('pgo');
+
+function renderProses(data) {
+  const lines = [];
+  const scoring = data.scoring || {};
+  lines.push(`profil ${scoring.profile || '-'}  hash ${scoring.profile_hash || '-'}`);
+  const loc = data.capture_location;
+  if (loc) {
+    lines.push(`lokasi ${loc.source}  ${loc.latitude}, ${loc.longitude}` +
+      (loc.captured_at ? `  ${loc.captured_at}` : ''));
+  }
+  lines.push('skor     ' + JSON.stringify(data.perception_prediction));
+  if (data.perception_prediction_baseline) {
+    lines.push('baseline ' + JSON.stringify(data.perception_prediction_baseline));
+  }
+  if (data._processing_time_ms) lines.push(`waktu ${data._processing_time_ms} ms`);
+  for (const key of ['segmentation_overlay_url', 'segmentation_url', 'privacy_masked_url',
+                     'original_image_url', 'result_url']) {
+    if (data[key]) lines.push(`${key.replace(/_url$/, '')}: ${data[key]}`);
+  }
+  const idx = scoring.indices;
+  if (idx) {
+    tindices.value = JSON.stringify(idx);
+    // Isi panel advise juga: metrik = 8 indeks, skor = 4 skor persepsi.
+    amet.value = JSON.stringify(idx);
+    if (data.perception_prediction) {
+      ascore.value = JSON.stringify(data.perception_prediction);
+    }
+    lines.push('');
+    lines.push('8 indeks + skor sudah diisikan ke panel "Uji advise" di atas.');
+  }
+  if (scoring.warnings?.length) lines.push('warnings: ' + scoring.warnings.join(' | '));
+  pout.textContent = lines.join('\n');
+}
+
+async function proses() {
+  if (!pfile.files.length) { pout.textContent = 'Pilih gambar dulu.'; return; }
+  pgo.disabled = true; pout.textContent = '... (segmentasi GPU, bisa 20-80 detik)';
+  const fd = new FormData();
+  fd.append('file', pfile.files[0]);
+  if (plat.value.trim()) fd.append('latitude', plat.value.trim());
+  if (plon.value.trim()) fd.append('longitude', plon.value.trim());
+  if (pprofile.value) fd.append('profile', pprofile.value);
+  const current = tuning();
+  if (pprofile.value || !tschema || JSON.stringify(current) !== JSON.stringify(tschema.defaults)) {
+    fd.append('tuning', JSON.stringify(current));
+  }
+  try {
+    const res = await fetch('/ai/process', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) {
+      pout.textContent = `[HTTP ${res.status}] ` + JSON.stringify(data, null, 2);
+    } else {
+      renderProses(data);
+    }
+  } catch (e) {
+    pout.textContent = '[ERROR] ' + e.message;
+  } finally {
+    pgo.disabled = false;
+  }
+}
+
+pgo.addEventListener('click', proses);
+
+// --- Tuning skor (PVI v1) -------------------------------------------------
+const tgrid = document.getElementById('tgrid');
+const tout = document.getElementById('tout');
+const tprofile = document.getElementById('tprofile');
+const tindices = document.getElementById('tindices');
+let tschema = null;      // respons /ai/scoring/schema
+let tstate = null;       // salinan defaults yang diubah slider
+const tinputs = {};      // path -> { el, val }
+
+const clone = (o) => JSON.parse(JSON.stringify(o));
+
+function tset(path, value) {
+  const parts = path.split('.');
+  let node = tstate;
+  for (let i = 0; i < parts.length - 1; i++) node = node[parts[i]] ??= {};
+  node[parts[parts.length - 1]] = value;
+}
+
+function tget(path) {
+  return path.split('.').reduce((node, key) => node?.[key], tstate);
+}
+
+function fmt(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(3);
+}
+
+function bindRange(path, el, valEl) {
+  tinputs[path] = { el, valEl };
+  el.value = tget(path);
+  valEl.textContent = fmt(Number(el.value));
+  el.addEventListener('input', () => {
+    const v = Number(el.value);
+    tset(path, v);
+    valEl.textContent = fmt(v);
+  });
+}
+
+function bindScalePair(path, el, valEl) {
+  bindRange(path, el, valEl);
+  const otherPath = path === 'scale.min' ? 'scale.max' : 'scale.min';
+  el.addEventListener('input', () => {
+    const other = tinputs[otherPath];
+    if (!other) return;
+    const v = Number(el.value);
+    const ov = Number(other.el.value);
+    // Jaga min < max: geser sisi lain minimal 0.5 menjauh.
+    const nv = path === 'scale.min' && ov <= v ? Math.min(10, v + 0.5)
+      : path === 'scale.max' && ov >= v ? Math.max(0, v - 0.5)
+      : null;
+    if (nv === null) return;
+    other.el.value = nv;
+    other.valEl.textContent = fmt(nv);
+    tset(otherPath, nv);
+  });
+}
+
+function renderGrid() {
+  tgrid.textContent = '';
+  for (const group of tschema.groups) {
+    for (const s of group.sliders || []) {
+      const wrap = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = s.label + ' ';
+      const valEl = document.createElement('b');
+      valEl.className = 'val';
+      label.appendChild(valEl);
+      const el = document.createElement('input');
+      el.type = 'range';
+      el.min = s.min; el.max = s.max; el.step = s.step;
+      wrap.append(label, el);
+      tgrid.appendChild(wrap);
+      if (group.kind === 'scale') bindScalePair(s.path, el, valEl);
+      else bindRange(s.path, el, valEl);
+    }
+    for (const r of group.ranges || []) {
+      const wrap = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = r.label + ' ';
+      const valEl = document.createElement('b');
+      valEl.className = 'val';
+      label.appendChild(valEl);
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.margin = '0';
+      const lo = document.createElement('input');
+      lo.type = 'number'; lo.step = r.step; lo.value = tget(r.path + '.min');
+      lo.style.flex = '1 1 80px';
+      const hi = document.createElement('input');
+      hi.type = 'number'; hi.step = r.step; hi.value = tget(r.path + '.max');
+      hi.style.flex = '1 1 80px';
+      const sync = () => {
+        tset(r.path + '.min', Number(lo.value));
+        tset(r.path + '.max', Number(hi.value));
+        valEl.textContent = `${fmt(Number(lo.value))} .. ${fmt(Number(hi.value))}`;
+      };
+      lo.addEventListener('input', sync);
+      hi.addEventListener('input', sync);
+      row.append(lo, hi);
+      wrap.append(label, row);
+      tgrid.appendChild(wrap);
+      sync();
+      tinputs[r.path + '.min'] = { el: lo, valEl, rangePath: r.path };
+      tinputs[r.path + '.max'] = { el: hi, valEl, rangePath: r.path };
+    }
+  }
+}
+
+function tuning() {
+  return clone(tstate);
+}
+
+function applyState(tuningObj) {
+  tstate = clone(tschema.defaults);
+  for (const [path, obj] of Object.entries(tuningObj || {})) {
+    const flat = (prefix, val) => {
+      if (val && typeof val === 'object') {
+        for (const [k, v] of Object.entries(val)) flat(prefix ? `${prefix}.${k}` : k, v);
+      } else tset(prefix, val);
+    };
+    flat(path, obj);
+  }
+  // muat ulang nilai ke semua input yang sudah dirender
+  for (const [path, entry] of Object.entries(tinputs)) {
+    const v = tget(path);
+    if (v === undefined) continue;
+    entry.el.value = v;
+    if (entry.el.type === 'range') entry.valEl.textContent = fmt(Number(v));
+  }
+  for (const entry of Object.values(tinputs)) {
+    if (!entry.rangePath) continue;
+    const lo = tget(entry.rangePath + '.min');
+    const hi = tget(entry.rangePath + '.max');
+    entry.valEl.textContent = `${fmt(lo)} .. ${fmt(hi)}`;
+  }
+}
+
+function renderHasil(data) {
+  const lines = [];
+  if (data.n_photos) {
+    lines.push(`profil ${data.profile}  hash ${data.profile_hash}  n=${data.n_photos}`);
+    for (const [k, v] of Object.entries(data.scores)) {
+      lines.push(`${k.padEnd(8)} mean ${v.mean.toFixed(2)}  std ${v.std.toFixed(2)}  ` +
+        `p2 ${v.p2.toFixed(2)}  p98 ${v.p98.toFixed(2)}  ` +
+        `ceiling ${v.at_ceiling_pct.toFixed(1)}%  floor ${v.at_floor_pct.toFixed(1)}%`);
+    }
+  } else if (data.perception_prediction) {
+    lines.push(`profil ${data.scoring.profile}  hash ${data.scoring.profile_hash}`);
+    lines.push(JSON.stringify(data.perception_prediction));
+    if (data.perception_prediction_baseline) {
+      lines.push(`baseline ${JSON.stringify(data.perception_prediction_baseline)}`);
+    }
+  } else if (data.name && data.tuning) {
+    lines.push(`profil ${data.name}  hash ${data.profile_hash}  versi ${data.scoring_version}`);
+    if (data.description) lines.push(data.description);
+  } else {
+    lines.push(JSON.stringify(data, null, 2));
+  }
+  if (data.warnings?.length) lines.push('warnings: ' + data.warnings.join(' | '));
+  if (Array.isArray(data.by_area)) {
+    lines.push('');
+    lines.push('per area (beauty mean):');
+    for (const v of data.by_area) {
+      lines.push(`  ${String(v.area).padEnd(24)} n=${String(v.n).padStart(3)}  ${Number(v.beauty_mean).toFixed(2)}`);
+    }
+  } else if (data.by_area) {
+    lines.push('');
+    lines.push(JSON.stringify(data.by_area, null, 2));
+  }
+  tout.textContent = lines.join('\n');
+}
+
+function fillProfileSelect(select, items) {
+  const current = select.value;
+  select.textContent = '';
+  const def = document.createElement('option');
+  def.value = ''; def.textContent = '— default —';
+  select.appendChild(def);
+  for (const item of items) {
+    const name = typeof item === 'string' ? item : item.name;
+    const o = document.createElement('option');
+    o.value = name;
+    o.textContent = item.description ? `${name} — ${item.description}` : name;
+    select.appendChild(o);
+  }
+  if (current && items.some((item) => (typeof item === 'string' ? item : item.name) === current)) {
+    select.value = current;
+  }
+}
+
+async function refreshProfiles() {
+  const res = await fetch('/ai/scoring/profiles');
+  const payload = res.ok ? await res.json() : { profiles: [] };
+  const items = Array.isArray(payload) ? payload : payload.profiles || [];
+  fillProfileSelect(tprofile, items);
+  fillProfileSelect(pprofile, items);
+}
+
+async function initTuning() {
+  const res = await fetch('/ai/scoring/schema');
+  tschema = await res.json();
+  tstate = clone(tschema.defaults);
+  renderGrid();
+  tindices.value = JSON.stringify({
+    building_visibility_index: 0.2483,
+    vegetation_coverage_index: 0.4033,
+    sky_openness_index: 0.2617,
+    ground_accessibility_index: 0.481,
+    human_activity_index: 0.0158,
+    vehicle_intensity_index: 0.0213,
+    traffic_infrastructure_index: 0.0749,
+    heritage_dominance_index: 0.5302,
+  });
+  await refreshProfiles();
+}
+
+async function panggilScoring(path, body, method = 'POST') {
+  tout.textContent = '...';
+  try {
+    const res = await fetch(path, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = res.status === 204 ? {} : await res.json();
+    if (!res.ok) { tout.textContent = `[HTTP ${res.status}] ` + JSON.stringify(data, null, 2); return null; }
+    renderHasil(data);
+    return data;
+  } catch (e) {
+    tout.textContent = '[ERROR] ' + e.message;
+    return null;
+  }
+}
+
+document.getElementById('tprev').addEventListener('click', async () => {
+  let indices;
+  try { indices = JSON.parse(tindices.value); } catch (e) { tout.textContent = 'JSON indeks tidak valid: ' + e.message; return; }
+  await panggilScoring('/ai/scoring/preview', { indices, tuning: tuning() });
+});
+
+document.getElementById('teval').addEventListener('click', async () => {
+  await panggilScoring('/ai/scoring/evaluate', { tuning: tuning() });
+});
+
+async function muatProfil(name, sync) {
+  if (!name) { applyState({}); return; }
+  const res = await fetch(`/ai/scoring/profiles/${encodeURIComponent(name)}`);
+  const data = await res.json();
+  if (!res.ok) { tout.textContent = `[HTTP ${res.status}] ` + JSON.stringify(data, null, 2); return; }
+  applyState(data.tuning);
+  document.getElementById('tname').value = data.name;
+  document.getElementById('tdesc').value = data.description || '';
+  if (sync) {
+    if ([...tprofile.options].some((o) => o.value === name)) tprofile.value = name;
+    if ([...pprofile.options].some((o) => o.value === name)) pprofile.value = name;
+  }
+  tout.textContent = `profil '${data.name}' dimuat (hash ${data.profile_hash})`;
+}
+
+document.getElementById('tload').addEventListener('click', async () => {
+  await muatProfil(tprofile.value, true);
+});
+
+pprofile.addEventListener('change', () => muatProfil(pprofile.value, true));
+
+document.getElementById('tsave').addEventListener('click', async () => {
+  const name = document.getElementById('tname').value.trim();
+  if (!name) { tout.textContent = 'Isi nama profil dulu.'; return; }
+  const data = await panggilScoring('/ai/scoring/profiles', {
+    name,
+    description: document.getElementById('tdesc').value.trim(),
+    tuning: tuning(),
+  });
+  if (data) {
+    await refreshProfiles();
+    tprofile.value = name;
+    pprofile.value = name;
+  }
+});
+
+document.getElementById('tdel').addEventListener('click', async () => {
+  const name = tprofile.value;
+  if (!name) { tout.textContent = 'Pilih profil dulu.'; return; }
+  const res = await fetch(`/ai/scoring/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  tout.textContent = res.ok ? `profil '${name}' dihapus` : `[HTTP ${res.status}]`;
+  if (res.ok) { await refreshProfiles(); applyState({}); }
+});
+
+initTuning().catch((e) => { tout.textContent = '[ERROR] ' + e.message; });
 </script>
 </body>
 </html>

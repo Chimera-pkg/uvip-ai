@@ -37,9 +37,10 @@ logger = logging.getLogger("uvip_ai")
 # PVI scorer: 8 indeks penelitian -> 4 skor perception_prediction.
 from uvip_ai.scoring.pvi_scorer import (  # noqa: E402
     INDEX_KEYS,
-    compute_scores_from_metrics,
     indices_from_pct_by_class,
 )
+# Tuning skor per-request (bobot/anchor/skala + profil tersimpan).
+from uvip_ai.scoring import profiles as scoring_profiles  # noqa: E402
 from uvip_ai.utils.storage import (  # noqa: E402
     MASKS_DIR,
     RESULTS_DIR,
@@ -111,8 +112,11 @@ from uvip_ai.llm.cors import LLMCorsMiddleware  # noqa: E402
 # llm/__init__.py), jadi fungsi helper diambil dari modulnya langsung.
 from uvip_ai.llm.router import advise_photo as llm_advise  # noqa: E402
 from uvip_ai.llm.router import result_context as llm_result_context  # noqa: E402
+from uvip_ai.api.scoring import router as scoring_router  # noqa: E402
 
 app.include_router(llm_router)
+# Tuning skor (slider/bobot/profil) - CPU-only, tanpa model ML.
+app.include_router(scoring_router)
 
 # CORS hanya untuk /llm/* (meniru shim Bun lama). Sengaja TIDAK global supaya
 # endpoint upload/proses video tidak ikut bisa dipanggil lintas-origin.
@@ -166,6 +170,7 @@ _ffmpeg_exe_cache: Optional[str] = None
 async def health():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat(),
             "build": BUILD_STAMP, "encode_path": "jpg_frames->libx264",
+            "scoring_version": scoring_profiles.SCORING_VERSION,
             "ffmpeg_in_use": _ffmpeg_exe_cache,
             "encode_selftest": _encode_selftest.get("status"),
             **_host_info()}
@@ -218,6 +223,21 @@ class ProcessRequest(BaseModel):
 
     url: Optional[str] = None
     is_offline_sync: bool = False
+
+
+def _resolve_scoring(tuning: Optional[str], profile: Optional[str]) -> dict:
+    """Form field ``tuning``/``profile`` -> spec scorer.
+
+    Error tuning = kesalahan klien (422), profil hilang = 404. Tanpa keduanya
+    mengembalikan default, jadi perilaku lama tidak berubah.
+    """
+    try:
+        return scoring_profiles.resolve(tuning=tuning, profile=profile)
+    except scoring_profiles.TuningError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(
+            status_code=404, detail=f"profil '{profile}' tidak ditemukan") from None
 
 
 
@@ -709,7 +729,8 @@ def _is_excel_metrics(metrics: Optional[dict]) -> bool:
 
 
 def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int,
-                          metrics: Optional[dict] = None) -> dict:
+                          metrics: Optional[dict] = None,
+                          scoring: Optional[dict] = None) -> dict:
     """Format metrics unified — sama persis untuk foto & video.
 
     Skor persepsi TIDAK lagi dihitung dengan rumus hardcoded (yang selalu
@@ -718,6 +739,11 @@ def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int
     ``metrics`` = hasil ``seg.infer(excel_mode=True)["metrics"]`` (jalur FOTO).
     Bila tidak memuat 8 indeks (jalur VIDEO), indeks diturunkan dari
     ``pct_by_class`` lewat fallback rasio di ``pvi_scorer``.
+
+    ``scoring`` = hasil ``scoring_profiles.resolve(...)``. Tanpa argumen ini
+    hasilnya identik dengan default lama; dengan tuning, respons memuat blok
+    audit ``scoring`` (bobot efektif, anchor, nilai mentah, ``at_bound``) dan
+    ``perception_prediction_baseline`` sebagai pembanding default.
     """
     green_pct = pct_by_class.get('vegetation', 0) + pct_by_class.get('tree', 0)
     building_pct = pct_by_class.get('building', 0)
@@ -726,8 +752,15 @@ def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int
     sidewalk_pct = pct_by_class.get('sidewalk', 0)
     excel = _is_excel_metrics(metrics)
     indices = metrics if excel else indices_from_pct_by_class(pct_by_class)
-    scores = compute_scores_from_metrics(indices)
-    return {
+    scoring = scoring or {}
+    scored = scoring_profiles.score_indices(
+        indices,
+        scoring.get("tuning"),
+        profile=scoring.get("profile", "default"),
+        normalized=scoring.get("normalized", False),
+        warnings=scoring.get("warnings"),
+    )
+    result = {
         "segmentation_results": {
             "green_coverage_pct": round(green_pct, 4),
             "building_coverage_pct": round(building_pct, 4),
@@ -735,7 +768,8 @@ def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int
             "visual_clutter_index": round(1 - (green_pct / 100), 4),
             "sky_visibility_pct": round(sky_pct, 4),
         },
-        "perception_prediction": scores,
+        "perception_prediction": scored["perception_prediction"],
+        "scoring": scored["scoring"],
         "shap_values": [],
         "metrics_source": {
             "indices_source": "segformer_excel" if excel else "pct_ratio_fallback",
@@ -745,11 +779,15 @@ def build_unified_metrics(pct_by_class: dict, seg_shape, processing_time_ms: int
         },
         "_processing_time_ms": processing_time_ms,
     }
+    if "perception_prediction_baseline" in scored:
+        result["perception_prediction_baseline"] = scored["perception_prediction_baseline"]
+    return result
 
 
 def post_process(path: Path, title: str,
                  latitude: Optional[float] = None,
-                 longitude: Optional[float] = None) -> dict:
+                 longitude: Optional[float] = None,
+                 scoring: Optional[dict] = None) -> dict:
     """Run full pipeline AI pada foto -> return unified result with saved files.
 
     Semua artefak ditulis FLAT dengan nama lama
@@ -763,6 +801,9 @@ def post_process(path: Path, title: str,
     ``latitude``/``longitude`` = posisi kiriman klien (perangkat, saat upload).
     Nilai ini HANYA dipakai bila file foto tidak punya GPS EXIF, dan ditandai
     ``source="client_upload"`` supaya asal-usul titik di peta bisa diaudit.
+
+    ``scoring`` = tuning skor ter-resolve (``scoring_profiles.resolve``).
+    ``None`` = default, identik dengan sebelum fitur tuning ada.
     """
     start_time = time.time()
     title = (title or "").strip() or path.stem
@@ -832,7 +873,8 @@ def post_process(path: Path, title: str,
 
         unified = build_unified_metrics(
             pct_by_class, seg_map.shape,
-            int((time.time() - start_time) * 1000), metrics=metrics)
+            int((time.time() - start_time) * 1000), metrics=metrics,
+            scoring=scoring)
 
         # Lokasi pengambilan: EXIF/sidecar diutamakan. Fallback ke koordinat
         # kiriman klien (posisi perangkat saat upload) dan diberi label
@@ -1187,10 +1229,18 @@ async def process_photo(
     photo_id: str = Form(""),
     latitude: Optional[float] = Form(None),
     longitude: Optional[float] = Form(None),
+    tuning: Optional[str] = Form(None),
+    profile: Optional[str] = Form(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
-    """Process foto jalan → return masking, segmentasi, prediksi, explainability."""
+    """Process foto jalan → return masking, segmentasi, prediksi, explainability.
+
+    ``tuning`` (JSON bobot/anchor/skala) dan ``profile`` (nama profil
+    tersimpan) mengubah cara skor dihitung; keduanya opsional dan tanpa
+    keduanya perilaku sama seperti sebelumnya.
+    """
     start = time.time()
+    scoring = _resolve_scoring(tuning, profile)
     logger.info("📥 Foto masuk: %s (size: %s, photo_id: %s)", file.filename, file.size, photo_id)
     try:
         # Nama file original mengikuti skema lama: <stem upload>_<uuid4>.
@@ -1204,7 +1254,8 @@ async def process_photo(
         logger.info("💾 Foto disimpan: %s", path)
 
         logger.info("⚙️  Memproses: %s ...", file.filename)
-        result = post_process(path, title, latitude=latitude, longitude=longitude)
+        result = post_process(path, title, latitude=latitude, longitude=longitude,
+                              scoring=scoring)
 
         elapsed = (time.time() - start) * 1000
         logger.info("✅ Selesai: %s — %.0fms", file.filename, elapsed)
@@ -1232,6 +1283,9 @@ async def ai_advise(
     context: Optional[str] = Form(None),
     model: Optional[str] = Form(None),
     detail: str = Form("high"),
+    tuning: Optional[str] = Form(None),
+    profile: Optional[str] = Form(None),
+    weights: Optional[str] = Form(None, description="JSON 5 bobot prioritas 0..1 (opsional)"),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Satu langkah: foto → segmentasi + skor PVI → rekomendasi LLM.
@@ -1241,11 +1295,38 @@ async def ai_advise(
     menyalin angka dari respons segmentasi ke parameter prompt.
 
     Beda dengan ``/ai/process``: respons memuat ``advice`` (diagnosis,
-    masalah, rekomendasi 3 peran, prompt gambar, caveat) dan
+    masalah, rekomendasi objektif persona "umum", prompt gambar, caveat) dan
     ``advice_context`` (model, durasi, parse_ok). Callback ke backend tidak
     menyertakan ``advice`` karena itu artefak tampilan, bukan data DB.
+
+    ``tuning``/``profile`` mengubah skor yang dikirim ke LLM **dan** yang
+    tersimpan di respons. ``weights`` (JSON 5 bobot prioritas) mengarahkan
+    urutan/penekanan rekomendasi; kalau kosong, rekomendasi seimbang (otomatis).
     """
     start = time.time()
+    scoring = _resolve_scoring(tuning, profile)
+    # Parse & sanitasi bobot prioritas (mode "manual"); kosong = otomatis.
+    weights_parsed: Optional[dict] = None
+    if weights and weights.strip():
+        try:
+            raw_weights = json.loads(weights)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422,
+                                detail=f"parameter 'weights' bukan JSON valid: {exc}")
+        if not isinstance(raw_weights, dict):
+            raise HTTPException(status_code=422,
+                                detail="parameter 'weights' harus objek JSON")
+        clean_weights: dict = {}
+        for k in llm_router.ADVISE_WEIGHT_KEYS:
+            v = raw_weights.get(k)
+            if v is None:
+                continue
+            try:
+                clean_weights[k] = min(max(float(v), 0.0), 1.0)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422,
+                                    detail=f"weights['{k}'] harus angka 0..1")
+        weights_parsed = clean_weights or None
     logger.info("📥 Foto masuk (advise): %s (photo_id: %s)", file.filename, photo_id)
     try:
         upload_stem = Path(file.filename or "").stem.strip()
@@ -1255,7 +1336,8 @@ async def ai_advise(
             file.file, "originals", upload_stem,
             guess_suffix(file.filename, file.content_type, "photo"),
         )
-        result = post_process(path, title, latitude=latitude, longitude=longitude)
+        result = post_process(path, title, latitude=latitude, longitude=longitude,
+                              scoring=scoring)
 
         metrics, scores = llm_result_context(result)
         loc = location
@@ -1272,6 +1354,7 @@ async def ai_advise(
             filename=file.filename,
             metrics=metrics,
             scores=scores,
+            weights=weights_parsed,
             location=loc,
             context=context,
             model=model,

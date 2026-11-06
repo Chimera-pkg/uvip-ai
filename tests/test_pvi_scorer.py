@@ -15,8 +15,10 @@ from __future__ import annotations
 import pytest
 
 from uvip_ai.scoring.pvi_scorer import (
+    PVI_WEIGHTS,
     SCORE_MAX,
     SCORE_MIN,
+    compute_pvi,
     compute_scores,
     compute_scores_from_metrics,
     indices_from_pct_by_class,
@@ -103,3 +105,20 @@ def test_pixel_ratios_are_clamped_to_one(pct):
         assert indices["ground_accessibility_index"] == pytest.approx(1.0)
     else:
         assert indices["traffic_infrastructure_index"] == pytest.approx(1.0)
+
+def test_custom_pvi_weights_are_applied():
+    """Bobot dari tuning wajib dipakai, bukan hanya bobot modul."""
+    vegetation_only = {key: 0.0 for key in PVI_WEIGHTS}
+    vegetation_only["vegetation_coverage_index"] = 1.0
+
+    veg_heavy = dict(PVI_WEIGHTS)
+    veg_heavy["vegetation_coverage_index"] = 0.9
+    veg_heavy["building_visibility_index"] = 0.0
+    building_heavy = dict(PVI_WEIGHTS)
+    building_heavy["vegetation_coverage_index"] = 0.0
+    building_heavy["building_visibility_index"] = 0.9
+
+    assert compute_pvi(vegetation_only, veg_heavy) == pytest.approx(0.9)
+    assert compute_pvi(vegetation_only, building_heavy) == pytest.approx(0.0)
+    # default tetap 0.15: perilaku lama tidak berubah
+    assert compute_pvi(vegetation_only) == pytest.approx(PVI_WEIGHTS["vegetation_coverage_index"])

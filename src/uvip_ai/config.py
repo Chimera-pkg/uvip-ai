@@ -41,31 +41,34 @@ class Settings(BaseSettings):
     # Performance
     latency_target_ms: int = 700
 
-    # LLM gateway (9router) - dipakai oleh router /llm/* (lihat uvip_ai/llm/router.py).
+    # LLM gateway - dipakai oleh router /llm/* (lihat uvip_ai/llm/router.py).
     # Upstream ini OpenAI-compatible tapi HANYA menerima POST; router /llm/*
     # menambah varian GET supaya prompt bisa dipanggil dari browser/<iframe>/curl.
-    nine_router_url: str = "https://9router-production-fc96.up.railway.app/v1"
+    nine_router_url: str = "https://api.deepseek.com/v1"
     nine_router_key: str = ""
-    # Model default /llm/ask & /llm/chat. JANGAN pakai id "de/..." (sudah 404 di
-    # gateway). Id yang terverifikasi hidup ada di GET /llm/models.
-    nine_router_model: str = "lo/deepseek-v4.1-flash"
-    # Model untuk /llm/vision & /llm/advise (harus vision-capable; cek
-    # /llm/models -> capabilities.vision). Terverifikasi: 4.8s & akurat.
-    # HINDARI x/glm-5.3-flash (mengaku buta) & x/deepseek-v4.1-flash (balas kosong).
-    nine_router_vision_model: str = "lo/glm-5.3-flash"
+    # Model default /llm/ask & /llm/chat. "deepseek-flash" (DeepSeek-V4.1-Flash)
+    # = model "flash" resmi: teks + gambar, reasoning. Id lain: deepseek-v4-pro
+    # (teks saja, BUKAN flash - jangan dipakai sesuai permintaan "flash aja").
+    nine_router_model: str = "deepseek-flash"
+    # Model untuk /llm/vision & /llm/advise (harus vision-capable).
+    nine_router_vision_model: str = "deepseek-flash"
     # Model khusus POST /llm/advise (analisa foto -> rekomendasi + prompt gambar).
-    nine_router_advise_model: str = "lo/glm-5.3-flash"
-    # Rantai fallback (dipisah koma). Ujungnya sengaja grok: paling tajam,
-    # walau lambat (~44s) - dipakai hanya kalau model utama gagal.
-    nine_router_fallbacks: str = "x/gpt-6-luna,lo/deepseek-v4.1-flash,gcli/grok-4.6"
+    nine_router_advise_model: str = "deepseek-flash"
+    # Rantai fallback (dipisah koma) - diarahkan ke `nine_router_fallback_url`
+    # bila diisi. DIPAKAI HANYA jalur TEKS (/llm/ask & /llm/chat); jalur vision
+    # memakai deepseek-flash saja (fallback teks tidak bisa baca gambar).
+    nine_router_fallbacks: str = "x/deepseek-v4.1-flash"
+    # Endpoint fallback (opsional). Kosong = pakai `nine_router_url`.
+    nine_router_fallback_url: str = ""
+    nine_router_fallback_key: str = ""
     nine_router_timeout_s: int = 120
 
     # OpenAI Images API - dipakai endpoint POST /llm/generate.
     # Key `sk-proj-...` disimpan di .env (gitignored). Model gambar resmi OpenAI
-    # adalah gpt-image-1 (regresi terhadap DALL-E); size valid:
+    # adalah gpt-image-1.5 (gpt-image-1 sudah dihapus); size valid:
     # 1024x1024 | 1536x1024 | 1024x1536.
     openai_api_key: str = ""
-    openai_image_model: str = "gpt-image-1"
+    openai_image_model: str = "gpt-image-1.5"
     openai_image_size: str = "1024x1024"
     openai_image_timeout_s: int = 120
 

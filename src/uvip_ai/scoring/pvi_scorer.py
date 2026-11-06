@@ -56,6 +56,9 @@ __all__ = [
     "INDEX_KEYS",
     "SCORE_MIN",
     "SCORE_MAX",
+    "SAFETY_WEIGHTS",
+    "COMFORT_WEIGHTS",
+    "UVI_WEIGHTS",
     "compute_pvi",
     "safety_index",
     "comfort_index",
@@ -90,6 +93,22 @@ CALIBRATION: Dict[str, Dict[str, float]] = {
     "comfort_raw": {"min": 0.1616, "max": 0.3918},
 }
 
+# Bobot campuran pembentuk safety/comfort/UVI. Default = rumus lama, tetapi
+# bisa ditimpa per-request (lihat ``uvip_ai.scoring.profiles``).
+SAFETY_WEIGHTS: Dict[str, float] = {
+    "ground_accessibility_index": 0.6,
+    "traffic_infrastructure_index": 0.4,
+}
+COMFORT_WEIGHTS: Dict[str, float] = {
+    "vegetation_coverage_index": 0.5,
+    "sky_openness_index": 0.5,
+}
+UVI_WEIGHTS: Dict[str, float] = {
+    "beauty": 0.4,
+    "safety": 0.3,
+    "comfort": 0.3,
+}
+
 SCORE_MIN = 1.0
 SCORE_MAX = 10.0
 
@@ -114,43 +133,49 @@ def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
 
-def _normalize(value: float, anchor: Mapping[str, float]) -> float:
+def _normalize(value: float, anchor: Mapping[str, float],
+               score_min: float = SCORE_MIN, score_max: float = SCORE_MAX) -> float:
     """Normalisasi min-max ke [SCORE_MIN, SCORE_MAX], lalu clamp.
 
     Anchor ``max == min`` (degenerate) -> kembalikan titik tengah.
     """
-    span = anchor["max"] - anchor["min"]
-    if span <= 0:
-        return (SCORE_MIN + SCORE_MAX) / 2.0
-    ratio = (value - anchor["min"]) / span
-    score = SCORE_MIN + (SCORE_MAX - SCORE_MIN) * ratio
-    return _clamp(score, SCORE_MIN, SCORE_MAX)
+    span = float(anchor["max"]) - float(anchor["min"])
+    if span <= 0 or score_max <= score_min:
+        return (score_min + score_max) / 2.0
+    ratio = (value - float(anchor["min"])) / span
+    score = score_min + (score_max - score_min) * ratio
+    return _clamp(score, score_min, score_max)
 
 
-def compute_pvi(metrics: Mapping[str, Any]) -> float:
+def compute_pvi(metrics: Mapping[str, Any],
+                weights: Mapping[str, float] | None = None) -> float:
     """PVI - jumlah tertimbang 8 indeks (semua di-clamp ke 0..1)."""
+    weights = weights or PVI_WEIGHTS
     return sum(
-        weight * _clamp(_get(metrics, key))
-        for key, weight in PVI_WEIGHTS.items()
+        float(weight) * _clamp(_get(metrics, key))
+        for key, weight in weights.items()
     )
 
 
-def safety_index(metrics: Mapping[str, Any]) -> float:
+def safety_index(metrics: Mapping[str, Any],
+                 weights: Mapping[str, float] | None = None) -> float:
     """Bahan ``safety_score``: akses pejalan kaki + infrastruktur lalu lintas."""
-    return 0.6 * _clamp(_get(metrics, "ground_accessibility_index")) + 0.4 * _clamp(
-        _get(metrics, "traffic_infrastructure_index")
-    )
+    weights = weights or SAFETY_WEIGHTS
+    return sum(w * _clamp(_get(metrics, key)) for key, w in weights.items())
 
 
-def comfort_index(metrics: Mapping[str, Any]) -> float:
+def comfort_index(metrics: Mapping[str, Any],
+                  weights: Mapping[str, float] | None = None) -> float:
     """Bahan ``comfort_score``: tutupan vegetasi + keterbukaan langit."""
-    return 0.5 * _clamp(_get(metrics, "vegetation_coverage_index")) + 0.5 * _clamp(
-        _get(metrics, "sky_openness_index")
-    )
+    weights = weights or COMFORT_WEIGHTS
+    return sum(w * _clamp(_get(metrics, key)) for key, w in weights.items())
 
 
 def compute_scores(metrics: Mapping[str, Any],
-                   calibration: Mapping[str, Mapping[str, float]] | None = None) -> Dict[str, Any]:
+                   calibration: Mapping[str, Mapping[str, float]] | None = None,
+                   weights: Mapping[str, float] | None = None,
+                   blend: Mapping[str, Mapping[str, float]] | None = None,
+                   scale: Mapping[str, float] | None = None) -> Dict[str, Any]:
     """8 indeks -> 4 skor siap-kontrak API.
 
     Parameters
@@ -159,6 +184,15 @@ def compute_scores(metrics: Mapping[str, Any],
         Anchor pengganti ``CALIBRATION`` (dipakai ``scripts/calibrate_pvi.py``
         untuk menilai sebaran skor dengan anchor hasil hitung barunya, sebelum
         ditulis ke modul).
+    weights:
+        Bobot 8 indeks pengganti ``PVI_WEIGHTS``. Harus sudah berjumlah 1.0;
+        normalisasi input pengguna dilakukan ``scoring.profiles``.
+    blend:
+        ``{"safety": {...}, "comfort": {...}, "uvi": {...}}`` pengganti bobot
+        campuran default.
+    scale:
+        ``{"min": ..., "max": ...}`` batas skor (default 1..10). UVI dibagi
+        ``max`` seperti implementasi lama, jadi default tidak berubah.
 
     Returns
     -------
@@ -172,17 +206,26 @@ def compute_scores(metrics: Mapping[str, Any],
     if not metrics:
         metrics = {}
     anchors = calibration or CALIBRATION
+    blend = blend or {}
+    score_min = float((scale or {}).get("min", SCORE_MIN))
+    score_max = float((scale or {}).get("max", SCORE_MAX))
 
-    pvi = compute_pvi(metrics)
-    safety_raw = safety_index(metrics)
-    comfort_raw = comfort_index(metrics)
+    pvi = compute_pvi(metrics, weights)
+    safety_raw = safety_index(metrics, blend.get("safety"))
+    comfort_raw = comfort_index(metrics, blend.get("comfort"))
 
-    beauty = _normalize(pvi, anchors["pvi"])
-    safety = _normalize(safety_raw, anchors["safety_raw"])
-    comfort = _normalize(comfort_raw, anchors["comfort_raw"])
+    beauty = _normalize(pvi, anchors["pvi"], score_min, score_max)
+    safety = _normalize(safety_raw, anchors["safety_raw"], score_min, score_max)
+    comfort = _normalize(comfort_raw, anchors["comfort_raw"], score_min, score_max)
 
-    # Rumus UVI dipertahankan dari implementasi lama.
-    uvi = (beauty / 10.0) * 0.4 + (safety / 10.0) * 0.3 + (comfort / 10.0) * 0.3
+    # UVI = rata-rata tertimbang ketiga skor. Pembagi ``score_max`` (default
+    # 10) dipertahankan supaya hasil default identik dengan implementasi lama.
+    uvi_weights = blend.get("uvi") or UVI_WEIGHTS
+    uvi = (
+        beauty * float(uvi_weights.get("beauty", 0.0))
+        + safety * float(uvi_weights.get("safety", 0.0))
+        + comfort * float(uvi_weights.get("comfort", 0.0))
+    ) / score_max
 
     return {
         "beauty_score": round(beauty, 2),
