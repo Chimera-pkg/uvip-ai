@@ -61,17 +61,7 @@ from uvip_ai.utils.storage import (  # noqa: E402
 video_tasks: dict = {}
 video_tasks_lock = threading.Lock()
 TASK_CLEANUP_HOURS = 168  # 7 hari
-_seg_model_cache = None  # Model cache (loaded once, reused for all tasks)
-
-def get_seg_model():
-    """Get cached SegFormer model. Load sekali, reuse semua task."""
-    global _seg_model_cache
-    if _seg_model_cache is None:
-        logger.info("Loading SegFormer model...")
-        from uvip_ai.segmentation.segformer import SegformerB5
-        _seg_model_cache = SegformerB5()
-        logger.info("Model loaded successfully")
-    return _seg_model_cache
+from uvip_ai.pipeline.evaluator import get_loaded_model, get_seg_model
 
 # Status akhir sebuah task: tidak akan berubah lagi, aman untuk dibersihkan
 TERMINAL_STATUSES = ("completed", "failed", "finished")
@@ -289,9 +279,10 @@ def _host_info() -> dict:
     # bilang "cuda tersedia", padahal model bisa turun ke CPU (probe kernel
     # gagal, dsb). Tanpa ini, /health bisa melaporkan "cuda" sementara inferensi
     # jalan di CPU -> diagnosis jadi salah arah.
-    if _seg_model_cache is not None:
-        info["model_device"] = getattr(_seg_model_cache, "_device", "unknown")
-        _dt = getattr(_seg_model_cache, "_dtype", None)
+    model_cache = get_loaded_model()
+    if model_cache is not None:
+        info["model_device"] = getattr(model_cache, "_device", "unknown")
+        _dt = getattr(model_cache, "_dtype", None)
         if _dt is not None:
             info["model_dtype"] = str(_dt).replace("torch.", "")
     else:

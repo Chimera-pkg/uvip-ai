@@ -40,6 +40,11 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from uvip_ai.config import settings
+from uvip_ai.pipeline.evaluator import (
+    compare_evaluations,
+    evaluate_image,
+    extract_before_metrics,
+)
 from uvip_ai.utils.storage import (
     GENERATED_DIR,
     output_path,
@@ -1493,7 +1498,7 @@ async def _openai_edit_image(*, image_path: Path, prompt: str, model: str,
 
 
 
-@router.post("/generate", summary="Baca hasil /ai/process -> generate ulang foto (OpenAI Images) + saran")
+@router.post("/generate", summary="Baca hasil /ai/process -> generate ulang foto (OpenAI Images) + saran + evaluasi 8 indeks")
 async def llm_generate(
     result: str = Form(..., description="JSON hasil /ai/process, atau path URL file result_*.json di server"),
     photo_path: Optional[str] = Form(None, description="Path gambar raw di server (opsional, untuk raw_image_url)"),
@@ -1501,6 +1506,7 @@ async def llm_generate(
     model: Optional[str] = Form(None, description="Model OpenAI images (default gpt-image-1.5)"),
     size: Optional[str] = Form(None, description="1024x1024 | 1536x1024 | 1024x1536"),
     count: Optional[str] = Form(None, description="Jumlah gambar, 1..4 (default 1)"),
+    evaluate: bool = Form(True, description="Otomatis analisis segmentasi 8 indeks pada gambar hasil AI"),
 ):
     """Alur satu endpoint "AI photo generator":
 
@@ -1516,6 +1522,9 @@ async def llm_generate(
        deterministik.
     5. Response berisi ``generated_image_url`` + ``raw_image_url`` + suggestions
        supaya bisa ditampilkan berdampingan (raw | saran | hasil AI).
+    6. Bila ``evaluate=True``, gambar hasil AI otomatis disegmentasi dengan SegFormer-B5
+       untuk menghasilkan 8 indeks komposit, skor UVI baru, overlay visual, dan
+       perbandingan Before vs After.
     """
     target = _load_target_json(result)
 
@@ -1559,6 +1568,43 @@ async def llm_generate(
                      or _raw_image_url(target.get("original_image_url"))
                      or _raw_image_url(target.get("segmentation_url")))
 
+    eval_block = None
+    generated_metrics = None
+    generated_scores = None
+    generated_overlay_url = None
+
+    if evaluate and paths:
+        try:
+            target_path = paths[0]
+            eval_res = evaluate_image(target_path, stem=stem, save_overlay=True)
+            before_indices, before_scores = extract_before_metrics(target)
+            comp = compare_evaluations(
+                before_indices, eval_res["indices"],
+                before_scores, eval_res["scores"]
+            )
+            generated_metrics = eval_res["indices"]
+            generated_scores = eval_res["scores"]
+            generated_overlay_url = eval_res["overlay_url"]
+            eval_block = {
+                "before": {
+                    "indices": before_indices,
+                    "scores": before_scores,
+                },
+                "after": {
+                    "indices": eval_res["indices"],
+                    "scores": eval_res["scores"],
+                    "segmentation_results": eval_res["segmentation_results"],
+                    "overlay_url": eval_res["overlay_url"],
+                    "segmentation_url": eval_res.get("segmentation_url"),
+                },
+                "delta": comp["indices"],
+                "scores_delta": comp["scores"],
+                "summary": comp["summary"],
+                "elapsed_ms": eval_res.get("elapsed_ms", 0),
+            }
+        except Exception as exc:
+            logger.warning("Gagal auto-evaluasi segmentasi gambar AI: %s", exc)
+
     return {
         "generated_image_url": saved[0] if saved else None,
         "generated_image_urls": saved,
@@ -1577,7 +1623,69 @@ async def llm_generate(
         "size": chosen_size,
         "count": count_n,
         "elapsed_ms": elapsed_ms,
+        "generated_metrics": generated_metrics,
+        "generated_scores": generated_scores,
+        "generated_overlay_url": generated_overlay_url,
+        "evaluation": eval_block,
         "usage": None,
+    }
+
+
+@router.post("/evaluate-generated", summary="Analisis segmentasi 8 indeks pada gambar hasil AI yang sudah ada")
+async def llm_evaluate_generated(
+    generated_path: str = Form(..., description="Path gambar AI atau URL di uploads/generated/"),
+    result: Optional[str] = Form(None, description="Path result_*.json atau JSON hasil /ai/process foto asli (opsional)"),
+):
+    """Jalankan analisis segmentasi 8 indeks pada gambar AI yang sudah tersimpan di server.
+
+    Jika `result` disertakan, respons akan memuat perbandingan Before vs After (delta).
+    """
+    try:
+        resolved_path = resolve_upload_path(generated_path)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not resolved_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File gambar tidak ditemukan: {generated_path}")
+
+    stem = _target_stem({"result_path": str(resolved_path)}, str(resolved_path))
+    try:
+        eval_res = evaluate_image(resolved_path, stem=stem, save_overlay=True)
+    except Exception as exc:
+        logger.error("Gagal evaluasi segmentasi: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Gagal evaluasi segmentasi: {exc}")
+
+    comparison = None
+    before_block = None
+    if result:
+        try:
+            target = _load_target_json(result)
+            before_indices, before_scores = extract_before_metrics(target)
+            comp = compare_evaluations(
+                before_indices, eval_res["indices"],
+                before_scores, eval_res["scores"]
+            )
+            before_block = {
+                "indices": before_indices,
+                "scores": before_scores,
+            }
+            comparison = {
+                "delta": comp["indices"],
+                "scores_delta": comp["scores"],
+                "summary": comp["summary"],
+            }
+        except Exception as exc:
+            logger.warning("Gagal memproses perbandingan dengan result: %s", exc)
+
+    return {
+        "generated_image_url": upload_url(resolved_path),
+        "generated_overlay_url": eval_res.get("overlay_url"),
+        "generated_metrics": eval_res.get("indices"),
+        "generated_scores": eval_res.get("scores"),
+        "segmentation_results": eval_res.get("segmentation_results"),
+        "before": before_block,
+        "comparison": comparison,
+        "elapsed_ms": eval_res.get("elapsed_ms", 0),
     }
 
 @router.get("", include_in_schema=False)
