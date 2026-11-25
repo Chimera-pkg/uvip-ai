@@ -800,7 +800,7 @@ def post_process(path: Path, title: str,
     title = (title or "").strip() or path.stem
     try:
         import numpy as np
-        from uvip_ai.pipeline.video_processor import CITYSCAPES_TO_DISPLAY, display_color_bgr
+        from uvip_ai.pipeline.video_processor import CITYSCAPES_COLORS
         from PIL import Image as PILImage
         from uvip_ai.utils.exif import read_capture_location
 
@@ -831,15 +831,14 @@ def post_process(path: Path, title: str,
         overlay_path = output_path(SEGMENTATION_DIR, "overlay_", source_stem, ".jpg", stamp)
         result_path = output_path(RESULTS_DIR, "result_", source_stem, ".json", stamp)
 
-        # Color-coded segmentation map (BGR, OpenCV) — warna palet TAMPILAN
-        # (sama dengan legend frontend), bukan CITYSCAPES_COLORS lama.
-        seg_bgr = np.zeros((seg_map.shape[0], seg_map.shape[1], 3), dtype=np.uint8)
-        for class_id in CITYSCAPES_TO_DISPLAY:
+        # Color-coded segmentation map (BGR to RGB)
+        seg_img = np.zeros((seg_map.shape[0], seg_map.shape[1], 3), dtype=np.uint8)
+        for class_id, color in CITYSCAPES_COLORS.items():
             mask = seg_map == class_id
             if np.any(mask):
-                seg_bgr[mask] = display_color_bgr(class_id)
+                seg_img[mask] = color
 
-        pil_seg = PILImage.fromarray(seg_bgr[..., ::-1])  # BGR -> RGB untuk simpan
+        pil_seg = PILImage.fromarray(seg_img[..., ::-1])  # BGR to RGB
         pil_seg.save(str(seg_path))
         logger.info("💾 Segmentation saved: %s", seg_path)
 
@@ -856,9 +855,10 @@ def post_process(path: Path, title: str,
         cv2.imwrite(str(mask_path), masked_image)
         logger.info("🛡️ Privacy mask saved: %s", mask_path)
 
-        # Create overlay (original + segmentation blend), tetap BGR.
-        overlay = cv2.addWeighted(image, 0.6, seg_bgr, 0.4, 0)
-        pil_overlay = PILImage.fromarray(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB))
+        # Create overlay (original + segmentation blend)
+        original_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        overlay = cv2.addWeighted(original_rgb, 0.6, seg_img[..., ::-1], 0.4, 0)
+        pil_overlay = PILImage.fromarray(overlay)
         pil_overlay.save(str(overlay_path))
         logger.info("🎨 Overlay saved: %s", overlay_path)
 

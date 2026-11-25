@@ -47,46 +47,6 @@ CITYSCAPES_COLORS = {
     18: (119, 11, 32),    # bicycle - brown
 }
 
-# ─── Palet TAMPILAN overlay ──────────────────────────────────────────────
-# Warna yang BENAR-BENAR dipakai untuk rendering overlay/seg (ganti
-# CITYSCAPES_COLORS di atas yang warnanya tidak cocok dengan legend
-# frontend). Nilai RGB — HARUS SAMA PERSIS dengan legend di
-# flutter result_screen.dart & dashboard SegmentationResultView.tsx.
-# Urutan sesuai legend: Vegetation, Sky, Vehicles, Building, Sidewalk, Road,
-# lalu tambahan "Manusia" (bedakan dari building ungu & kendaraan merah) dan
-# "Lainnya" (fence/pole/traffic light/sign).
-DISPLAY_COLORS: dict[str, tuple[int, int, int]] = {
-    "road":       (51, 65, 85),      # #334155
-    "sidewalk":   (234, 179, 8),     # #eab308
-    "building":   (139, 92, 246),    # #8b5cf6
-    "vegetation": (34, 197, 94),     # #22c55e
-    "sky":        (0, 180, 216),     # #00b4d8
-    "vehicle":    (239, 68, 68),     # #ef4444
-    "person":     (249, 115, 22),    # #f97316  manusia - jelas beda dari building & vehicle
-    "other":      (148, 163, 184),   # #94a3b8  fence/pole/traffic light/sign
-}
-
-# id kelas Cityscapes (0..18) -> nama kelas tampilan di DISPLAY_COLORS.
-CITYSCAPES_TO_DISPLAY: dict[int, str] = {
-    0: "road", 1: "sidewalk", 2: "building", 3: "building",
-    4: "other", 5: "other", 6: "other", 7: "other",
-    8: "vegetation", 9: "vegetation", 10: "sky",
-    11: "person", 12: "person",
-    13: "vehicle", 14: "vehicle", 15: "vehicle",
-    16: "vehicle", 17: "vehicle", 18: "vehicle",
-}
-
-
-def display_color_rgb(class_id: int) -> tuple[int, int, int]:
-    """Warna RGB tampilan untuk satu id kelas Cityscapes."""
-    return DISPLAY_COLORS[CITYSCAPES_TO_DISPLAY.get(int(class_id), "other")]
-
-
-def display_color_bgr(class_id: int) -> tuple[int, int, int]:
-    """Warna BGR (OpenCV) tampilan untuk satu id kelas Cityscapes."""
-    r, g, b = display_color_rgb(class_id)
-    return (b, g, r)
-
 
 class VideoProcessor:
     """Process video frames dengan segmentation overlay."""
@@ -132,18 +92,14 @@ class VideoProcessor:
         return frame_paths
 
     def create_overlay(self, frame: np.ndarray, segmentation_mask: np.ndarray, alpha: float = 0.5) -> np.ndarray:
-        """Create color overlay dari segmentation mask.
-
-        Warna = palet TAMPILAN (DISPLAY_COLORS), BGR (OpenCV), sama dengan
-        legend frontend. Frame diasumsikan BGR (hasil cv2.imread).
-        """
+        """Create color overlay dari segmentation mask."""
         overlay = frame.copy()
 
         # Apply color untuk setiap class
-        for class_id in CITYSCAPES_TO_DISPLAY:
+        for class_id, color in CITYSCAPES_COLORS.items():
             mask = segmentation_mask == class_id
             if np.any(mask):
-                overlay[mask] = display_color_bgr(class_id)
+                overlay[mask] = color
 
         # Blend dengan original
         result = cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0)
