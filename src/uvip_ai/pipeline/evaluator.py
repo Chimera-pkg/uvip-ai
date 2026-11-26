@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 from PIL import Image as PILImage
 
-from uvip_ai.pipeline.video_processor import CITYSCAPES_COLORS
+from uvip_ai.pipeline.video_processor import CITYSCAPES_TO_DISPLAY, display_color_rgb
 from uvip_ai.scoring import profiles as scoring_profiles
 from uvip_ai.scoring.pvi_scorer import (
     INDEX_KEYS,
@@ -53,7 +53,8 @@ def get_seg_model():
             if _seg_model_cache is None:
                 logger.info("Loading SegFormer model...")
                 from uvip_ai.segmentation.segformer import SegformerB5
-                _seg_model_cache = SegformerB5()
+                from uvip_ai.config import settings
+                _seg_model_cache = SegformerB5(settings.segformer_model)
                 logger.info("Model loaded successfully")
     return _seg_model_cache
 
@@ -112,15 +113,16 @@ def evaluate_image(
     seg_url_str = None
 
     if save_overlay:
-        # Bangun gambar segmentasi warna Cityscapes
-        seg_img = np.zeros((seg_map.shape[0], seg_map.shape[1], 3), dtype=np.uint8)
-        for class_id, color in CITYSCAPES_COLORS.items():
+        # Bangun gambar segmentasi warna palet TAMPILAN (RGB), sama dengan
+        # legend frontend.
+        seg_rgb = np.zeros((seg_map.shape[0], seg_map.shape[1], 3), dtype=np.uint8)
+        for class_id in CITYSCAPES_TO_DISPLAY:
             mask = (seg_map == class_id)
             if np.any(mask):
-                seg_img[mask] = color
+                seg_rgb[mask] = display_color_rgb(class_id)
 
-        # Overlay blend (60% gambar asli, 40% warna segmentasi)
-        overlay = cv2.addWeighted(rgb_image, 0.6, seg_img[..., ::-1], 0.4, 0)
+        # Overlay blend (60% gambar asli, 40% warna segmentasi) — RGB + RGB.
+        overlay = cv2.addWeighted(rgb_image, 0.6, seg_rgb, 0.4, 0)
         overlay_path = output_path(SEGMENTATION_DIR, "overlay_gen_", stem, ".jpg", stamp)
         pil_overlay = PILImage.fromarray(overlay)
         pil_overlay.save(str(overlay_path), quality=92)
@@ -128,7 +130,7 @@ def evaluate_image(
         overlay_rel_path = rel_path(overlay_path)
 
         seg_path = output_path(SEGMENTATION_DIR, "seg_gen_", stem, ".jpg", stamp)
-        pil_seg = PILImage.fromarray(seg_img[..., ::-1])
+        pil_seg = PILImage.fromarray(seg_rgb)
         pil_seg.save(str(seg_path), quality=90)
         seg_url_str = upload_url(seg_path)
 

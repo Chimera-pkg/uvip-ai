@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # Models
     hf_home: str = str(PROJECT_ROOT / "models" / "hf_cache")
-    segformer_model: str = "nvidia/segformer-b0-finetuned-cityscapes-1024-1024"  # lighter than b5, works with safetensors
+    segformer_model: str = "nvidia/segformer-b5-finetuned-cityscapes-1024-1024"  # b5 (akurasi lebih tinggi)
     dinov2_model: str = "facebook/dinov2-small"  # small untuk CPU, large untuk GPU
     yolo_model: str = "yolov8n.pt"
     xgboost_model_path: str = str(PROJECT_ROOT / "models" / "perception" / "beauty_xgb.pkl")
