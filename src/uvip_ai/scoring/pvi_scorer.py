@@ -275,8 +275,6 @@ def indices_from_pct_by_class(pct_by_class: Mapping[str, Any]) -> Dict[str, floa
         "ground_accessibility_index": min(ratio("road") + ratio("sidewalk"), 1.0),
         "human_activity_index": ratio("pedestrian"),
         "vehicle_intensity_index": ratio("vehicle"),
-        "traffic_infrastructure_index": min(
-            ratio("signage") + ratio("street_furniture"), 1.0
-        ),
+        "traffic_infrastructure_index": ratio("other"),
         "heritage_dominance_index": 0.40 * bvi,
     }

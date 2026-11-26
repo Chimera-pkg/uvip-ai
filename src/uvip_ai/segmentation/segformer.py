@@ -60,13 +60,14 @@ class SegformerB5:
         "train": "vehicle",       # Moving object - filterable
         "motorcycle": "vehicle",  # Moving object - filterable (2w)
         "bicycle": "vehicle",     # Moving object - filterable (2w)
-        "signage": "signage",     # Traffic signs, infrastructure
-        "pole": "street_furniture",
-        "traffic_light": "signage",
-        # id2label asli model menulis "traffic sign" -> dinormalisasi menjadi
-        # "traffic_sign". Tanpa baris ini kelas itu jatuh ke nama mentah dan
-        # signage selalu 0 (sign/traffic light tidak pernah masuk indeks).
-        "traffic_sign": "signage",
+        # Objek kecil (rambu, tiang, lampu lalu lintas) digabung ke "other"
+        # supaya tidak terpecah jadi angka kecil-kecil (signage ~0.2%,
+        # street_furniture ~3.4%, terrain ~1.7%). User melihat satu kategori
+        # "Lainnya" yang masuk legend.
+        "signage": "other",
+        "pole": "other",
+        "traffic_light": "other",
+        "traffic_sign": "other",
         "terrain": "other",
         # Heritage detection requires additional model/fine-tuning
         # Currently placeholder for future enhancement
@@ -74,7 +75,7 @@ class SegformerB5:
 
     METRIC_CLASSES = [
         "vegetation", "building", "road", "sidewalk", "sky",
-        "signage", "vehicle", "pedestrian", "street_furniture", "heritage"
+        "vehicle", "pedestrian", "other", "heritage"
     ]
 
     # Kuantisasi grayscale untuk GLCM. 32 level cukup agar homogeneity stabil
@@ -255,7 +256,7 @@ class SegformerB5:
         sky = pct_by_class.get("sky", 0)
         road = pct_by_class.get("road", 0)
         swk = pct_by_class.get("sidewalk", 0)
-        sig = pct_by_class.get("signage", 0)
+        sig = pct_by_class.get("other", 0)  # gabungan rambu/tiang/terrain
         veh = pct_by_class.get("vehicle", 0)
 
         green_coverage = veg + sky
@@ -427,8 +428,9 @@ class SegformerB5:
         # bernilai 14x lipat batas atas indeks (0..1).
         vii = ratio.get("vehicle", 0.0)
 
-        # 7. Traffic Infrastructure Index (traffic sign + traffic light + pole)
-        tii = min(ratio.get("signage", 0.0) + ratio.get("street_furniture", 0.0), 1.0)
+        # 7. Traffic Infrastructure Index — sekarang gabungan objek kecil
+        # (rambu + tiang + terrain) yang sudah dimerge ke kategori "other".
+        tii = ratio.get("other", 0.0)
 
         # 8. Heritage Dominance Index
         building_mean_rgb = self._mean_rgb(rgb, masks.get("building"))
@@ -436,7 +438,7 @@ class SegformerB5:
                + 0.20 * building_mean_rgb + 0.15 * homogeneity("building"))
 
         static_categories = ["building", "vegetation", "sky", "road", "sidewalk",
-                             "signage", "street_furniture", "heritage"]
+                             "other", "heritage"]
         static_sum = sum(pct_by_class.get(cat, 0) for cat in static_categories)
         moving_total = pct_by_class.get("pedestrian", 0) + pct_by_class.get("vehicle", 0)
 

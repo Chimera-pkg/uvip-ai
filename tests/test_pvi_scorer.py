@@ -96,7 +96,7 @@ def test_more_vegetation_never_lowers_comfort():
     assert dense["comfort_score"] > sparse["comfort_score"]
 
 
-@pytest.mark.parametrize("pct", [{"road": 90, "sidewalk": 40}, {"signage": 70, "street_furniture": 60}])
+@pytest.mark.parametrize("pct", [{"road": 90, "sidewalk": 40}, {"other": 130}])
 def test_pixel_ratios_are_clamped_to_one(pct):
     indices = indices_from_pct_by_class(pct)
     for key, value in indices.items():
