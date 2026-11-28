@@ -40,6 +40,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from uvip_ai.config import settings
+from uvip_ai.llm import infographic as infographic_mod
 from uvip_ai.pipeline.evaluator import (
     compare_evaluations,
     evaluate_image,
@@ -47,6 +48,7 @@ from uvip_ai.pipeline.evaluator import (
 )
 from uvip_ai.utils.storage import (
     GENERATED_DIR,
+    INFOGRAPHICS_DIR,
     output_path,
     rel_path,
     resolve_result_path,
@@ -803,9 +805,12 @@ ATURAN KETAT
    terendah, dan pertebal saran pada dimensi berbobot besar. Dimensi berbobot 0 boleh
    diabaikan. Sebutkan di "diagnosis" dimensi mana yang jadi prioritas.
 7. "prompt_gambar" = prompt BAHASA INGGRIS untuk EDIT gambar (image-to-image), memuat:
-   jenis ruang, material, vegetasi, pencahayaan. WAJIB menyertakan penegasan bahwa
-   struktur bangunan/pondasi, tata letak, dan sudut kamera TIDAK berubah; hanya
-   [elemen yang diubah] yang diubah. Tulis kondisi IDEAL (perbaikan sudah dilakukan).
+   jenis ruang, material, vegetasi, pencahayaan. WAJIB menyertakan penegasan:
+   posisi kamera, arah pandang, focal length, dan perspektif TIDAK berubah;
+   struktur bangunan/pondasi dan tata letak TIDAK berubah; awan/langit/cuaca/
+   pencahayaan/bayangan TIDAK ditambah atau diubah; elemen yang tidak disebut
+   TIDAK ditambah/dihapus/dipindah; hanya [elemen yang diubah] yang diubah.
+   Tulis kondisi IDEAL (perbaikan sudah dilakukan).
 8. "caveat" wajib diisi: sebutkan bahwa analisa hanya dari 1 foto (tanpa data 3D,
    topografi, volume lalu lintas, atau survei lapangan) sehingga rekomendasi masih
    hipotesis yang perlu verifikasi lapangan.
@@ -1255,9 +1260,12 @@ def _simple_image_prompt(target: dict) -> str:
         ph.append("provide more building setbacks")
     if len(ph) == 1:  # pastikan selalu ada aksi
         ph.append("improve the overall street environment")
-    ph.append("keep all building structures, foundations, layout and the camera "
-              "point of view unchanged; only modify the mentioned elements; "
-              "photorealistic")
+    ph.append("keep the exact camera position, viewing direction, focal length, "
+              "and perspective; keep all building structures, foundations, and "
+              "layout unchanged; do not add, remove, or change clouds, sky, "
+              "weather, lighting, or shadows; do not add, remove, relocate, or "
+              "alter any element not explicitly mentioned; only modify the "
+              "mentioned elements; photorealistic")
     return ", ".join(ph) + "."
 
 
@@ -1687,6 +1695,174 @@ async def llm_evaluate_generated(
         "comparison": comparison,
         "elapsed_ms": eval_res.get("elapsed_ms", 0),
     }
+
+
+async def _ask_infographic(*, model: str, prompt: str, before_bytes: bytes,
+                           before_type: str, after_bytes: bytes,
+                           after_type: str, max_tokens: int) -> dict:
+    """LLM vision dengan 2 gambar (before + after) -> JSON infografis terstruktur."""
+    b64_before = base64.b64encode(before_bytes).decode("ascii")
+    b64_after = base64.b64encode(after_bytes).decode("ascii")
+    messages: list = [
+        {"role": "system", "content": infographic_mod.INFOGRAPHIC_SYSTEM},
+        {"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url",
+             "image_url": {"url": f"data:{before_type};base64,{b64_before}", "detail": "high"}},
+            {"type": "image_url",
+             "image_url": {"url": f"data:{after_type};base64,{b64_after}", "detail": "high"}},
+        ]},
+    ]
+    last: Optional[HTTPException] = None
+    last_parse_error = ""
+    for m in _advise_chain(model):
+        base_len = len(messages)
+        for attempt in (1, 2):
+            try:
+                out = await _call_upstream(model=m, messages=messages,
+                                           max_tokens=max_tokens, temperature=None,
+                                           timeout_s=settings.nine_router_timeout_s)
+            except HTTPException as exc:
+                last = exc
+                logger.warning("[llm] infographic model=%s gagal: %s", m, exc.detail)
+                break
+            finish = out.get("finish_reason") or ""
+            parsed = _extract_json_object(out["content"])
+            ok, why = (False, "tidak ada objek JSON")
+            if parsed is not None:
+                ok, why = infographic_mod.infographic_schema_ok(parsed)
+            if ok and finish != "length":
+                out["infographic"] = parsed
+                out["parse_ok"] = True
+                return out
+            last_parse_error = out["content"][:300]
+            logger.warning("[llm] infographic model=%s gagal validasi (attempt %d): %s",
+                           m, attempt, why)
+            if attempt == 1:
+                messages.append({"role": "assistant", "content": out["content"][:2000]})
+                messages.append({"role": "user", "content": (
+                    f"Balasan tadi tidak sesuai skema ({why}). Kirim ULANG HANYA "
+                    "satu objek JSON dengan bentuk persis di system prompt. "
+                    "Tanpa penjelasan, tanpa pagar markdown.")})
+        del messages[base_len:]
+    if last is not None:
+        raise last
+    raise HTTPException(status_code=502,
+                        detail=f"model tidak menghasilkan JSON valid: {last_parse_error!r}")
+
+
+@router.post("/infographic", summary="Foto hasil generate AI -> analisis 10 intervensi + infografis PNG")
+async def llm_infographic(
+    generated_path: str = Form(..., description="Path/URL gambar hasil AI di uploads/generated/"),
+    result: Optional[str] = Form(None, description="result_*.json atau JSON hasil /ai/process (opsional, untuk foto asli + UVI before)"),
+    photo_path: Optional[str] = Form(None, description="Path foto asli (BEFORE) bila result kosong"),
+    project_name: Optional[str] = Form(None, description="Nama proyek (opsional)"),
+    photo_id: Optional[str] = Form(None, description="Photo ID (opsional)"),
+    location: Optional[str] = Form(None, description="Nama lokasi (opsional)"),
+    city: Optional[str] = Form(None, description="Kota/Region (opsional)"),
+    urban_character: Optional[str] = Form(None, description="Karakter urban (opsional, else infer LLM)"),
+    heritage_status: Optional[str] = Form(None, description="Status heritage (opsional)"),
+):
+    """Langkah 3 rangkaian: terima foto hasil generate -> infografis (TIDAK generate ulang).
+
+    1. Resolve ``generated_path`` (AFTER).
+    2. Load ``result`` (opsional) -> BEFORE (foto asli) + UVI + 5 indikator.
+    3. LLM vision 2 gambar (before + after) -> 10 intervensi + regulasi + validasi.
+    4. Render infografis 2-kolom programatik (Pillow) -> PNG.
+    """
+    # 1. AFTER = foto hasil generate AI.
+    try:
+        after_path = resolve_upload_path(generated_path)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not after_path.is_file():
+        raise HTTPException(status_code=404, detail=f"gambar hasil AI tidak ditemukan: {generated_path}")
+
+    # 2. BEFORE + UVI + 5 indikator dari result (opsional).
+    seg: dict = {}
+    perc: dict = {}
+    cap: dict = {}
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    target: Optional[dict] = None
+    if result and result.strip():
+        target = _load_target_json(result)
+        seg = target.get("segmentation_results") or {}
+        perc = target.get("perception_prediction") or {}
+        cap = target.get("capture_location") or {}
+        if isinstance(cap, dict):
+            lat = cap.get("latitude")
+            lon = cap.get("longitude")
+    before_path: Optional[Path] = None
+    if target is not None:
+        before_path = (_raw_image_path(target.get("original_image_url"))
+                       or _raw_image_path(target.get("segmentation_url")))
+    before_path = before_path or _raw_image_path(photo_path)
+    if before_path is None:
+        raise HTTPException(status_code=400,
+                            detail="foto asli (BEFORE) tidak tersedia - beri result atau photo_path")
+
+    # 3. Lokasi fallback: EXIF/result > foto asli > None.
+    loc = (location or "").strip()
+    if not loc and isinstance(cap, dict) and cap.get("latitude") is not None:
+        loc = f"{float(cap['latitude']):.5f}, {float(cap['longitude']):.5f}"
+    city_val = (city or "").strip() or None
+
+    prompt_text = infographic_mod.build_infographic_prompt(
+        metrics=seg, scores=perc,
+        project_name=project_name, photo_id=photo_id, location=loc, city=city_val,
+        lat=lat, lon=lon, urban_character=urban_character, heritage_status=heritage_status,
+    )
+    try:
+        out = await _ask_infographic(
+            model=settings.nine_router_advise_model,
+            prompt=prompt_text,
+            before_bytes=before_path.read_bytes(),
+            before_type=_vision_media_type(before_path.name, None),
+            after_bytes=after_path.read_bytes(),
+            after_type=_vision_media_type(after_path.name, None),
+            max_tokens=8192,
+        )
+    except HTTPException as exc:
+        # LLM gagal -> tetap kembalikan foto + prompt (tanpa analisis).
+        return {
+            "generated_image_url": upload_url(after_path),
+            "infographic": None,
+            "infographic_url": None,
+            "error": str(exc.detail),
+            "prompt": prompt_text,
+        }
+
+    advice = out["infographic"]
+
+    # Render infografis 2-kolom.
+    meta = {
+        "project_name": (project_name or "").strip(),
+        "photo_id": (photo_id or "").strip(),
+        "location": loc,
+        "city": city_val or "",
+        "urban_character": str(advice.get("urban_character") or ""),
+        "heritage_status": str(advice.get("heritage_status") or ""),
+    }
+    uvi = perc.get("uvi_score")
+    stem = _target_stem({"result_path": str(after_path)}, str(after_path))
+    info_path = output_path(INFOGRAPHICS_DIR, "infographic_", stem, ".png")
+    infographic_mod.render_infographic_png(
+        photo_path=after_path, advice=advice, meta=meta,
+        uvi_score=float(uvi) if isinstance(uvi, (int, float)) else None,
+        out_path=info_path,
+    )
+
+    return {
+        "generated_image_url": upload_url(after_path),
+        "infographic_url": upload_url(info_path),
+        "infographic": advice,
+        "raw_image_url": upload_url(before_path),
+        "model": out.get("model_used"),
+        "llm_elapsed_ms": out.get("elapsed_ms"),
+        "parse_ok": out.get("parse_ok", False),
+    }
+
 
 @router.get("", include_in_schema=False)
 @router.get("/", include_in_schema=False)

@@ -49,6 +49,7 @@ SEGMENTATION_DIR = UPLOADS_DIR / "segmentation"
 RESULTS_DIR = UPLOADS_DIR / "results"
 VIDEOS_DIR = UPLOADS_DIR / "videos"
 GENERATED_DIR = UPLOADS_DIR / "generated"
+INFOGRAPHICS_DIR = UPLOADS_DIR / "infographics"
 TEMP_DIR = UPLOADS_DIR / "temp"
 
 _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
@@ -69,9 +70,9 @@ _MIME_SUFFIXES = {
 # <prefix>_<stem>_<epoch_ms>[_N].<ext>; timestamp lama tetap didukung.
 _TS = r"(?:\d{8}_\d{6}|\d{10,13})"
 _ARTIFACT_RE = re.compile(
-    r"^(?P<prefix>seg|overlay|mask|img|video|result_video|result)_"
+    r"^(?P<prefix>seg|overlay|mask|img|infographic|video|result_video|result)_"
     rf"(?P<stem>.+?)_(?P<ts>{_TS})(?P<n>_\d+)?"
-    r"\.(?P<ext>jpe?g|png|webp|mp4|mov|webm|json)$",
+    r"\.(?P<ext>jpe?g|png|webp|pdf|mp4|mov|webm|json)$",
     re.IGNORECASE,
 )
 _VIDEO_LEGACY_RE = re.compile(

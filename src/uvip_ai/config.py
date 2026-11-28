@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # Backend
     uvip_api_base_url: str = "http://127.0.0.1:8000"
     uvip_api_token: str = ""
+    uvip_api_email: str = ""
+    uvip_api_password: str = ""
 
     # Device
     uvip_device: str = "auto"          # auto | cuda | cpu
