@@ -49,6 +49,7 @@ from uvip_ai.pipeline.evaluator import (
 from uvip_ai.utils.storage import (
     GENERATED_DIR,
     INFOGRAPHICS_DIR,
+    UPLOADS_DIR,
     output_path,
     rel_path,
     resolve_result_path,
@@ -1697,21 +1698,21 @@ async def llm_evaluate_generated(
     }
 
 
-async def _ask_infographic(*, model: str, prompt: str, before_bytes: bytes,
-                           before_type: str, after_bytes: bytes,
+async def _ask_infographic(*, model: str, prompt: str, before_bytes: Optional[bytes],
+                           before_type: Optional[str], after_bytes: bytes,
                            after_type: str, max_tokens: int) -> dict:
-    """LLM vision dengan 2 gambar (before + after) -> JSON infografis terstruktur."""
-    b64_before = base64.b64encode(before_bytes).decode("ascii")
+    """LLM vision (before + after, atau after saja) -> JSON infografis terstruktur."""
     b64_after = base64.b64encode(after_bytes).decode("ascii")
+    content: list = [{"type": "text", "text": prompt}]
+    if before_bytes:
+        b64_before = base64.b64encode(before_bytes).decode("ascii")
+        content.append({"type": "image_url",
+                        "image_url": {"url": f"data:{before_type};base64,{b64_before}", "detail": "high"}})
+    content.append({"type": "image_url",
+                    "image_url": {"url": f"data:{after_type};base64,{b64_after}", "detail": "high"}})
     messages: list = [
         {"role": "system", "content": infographic_mod.INFOGRAPHIC_SYSTEM},
-        {"role": "user", "content": [
-            {"type": "text", "text": prompt},
-            {"type": "image_url",
-             "image_url": {"url": f"data:{before_type};base64,{b64_before}", "detail": "high"}},
-            {"type": "image_url",
-             "image_url": {"url": f"data:{after_type};base64,{b64_after}", "detail": "high"}},
-        ]},
+        {"role": "user", "content": content},
     ]
     last: Optional[HTTPException] = None
     last_parse_error = ""
@@ -1798,9 +1799,33 @@ async def llm_infographic(
         before_path = (_raw_image_path(target.get("original_image_url"))
                        or _raw_image_path(target.get("segmentation_url")))
     before_path = before_path or _raw_image_path(photo_path)
+
+    # Fallback: turunkan BEFORE + UVI dari nama file gambar hasil generate
+    # (img_<stem>_<epoch>.png -> uploads/originals/<stem>.<ext> + result_<stem>_*.json).
+    stem = _target_stem({"result_path": str(after_path)}, str(after_path))
     if before_path is None:
-        raise HTTPException(status_code=400,
-                            detail="foto asli (BEFORE) tidak tersedia - beri result atau photo_path")
+        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+            candidate = UPLOADS_DIR / "originals" / f"{stem}{ext}"
+            if candidate.is_file():
+                before_path = candidate
+                break
+    if not seg and not perc:
+        result_files = sorted((UPLOADS_DIR / "results").glob(f"result_{stem}_*.json"))
+        if result_files:
+            try:
+                tgt = json.loads(result_files[-1].read_text(encoding="utf-8"))
+                if isinstance(tgt, dict):
+                    seg = tgt.get("segmentation_results") or {}
+                    perc = tgt.get("perception_prediction") or {}
+                    cap = tgt.get("capture_location") or {}
+                    if isinstance(cap, dict):
+                        lat = cap.get("latitude")
+                        lon = cap.get("longitude")
+                    if before_path is None:
+                        before_path = (_raw_image_path(tgt.get("original_image_url"))
+                                       or _raw_image_path(tgt.get("segmentation_url")))
+            except (OSError, json.JSONDecodeError):
+                pass
 
     # 3. Lokasi fallback: EXIF/result > foto asli > None.
     loc = (location or "").strip()
@@ -1817,8 +1842,8 @@ async def llm_infographic(
         out = await _ask_infographic(
             model=settings.nine_router_advise_model,
             prompt=prompt_text,
-            before_bytes=before_path.read_bytes(),
-            before_type=_vision_media_type(before_path.name, None),
+            before_bytes=before_path.read_bytes() if before_path else None,
+            before_type=_vision_media_type(before_path.name, None) if before_path else None,
             after_bytes=after_path.read_bytes(),
             after_type=_vision_media_type(after_path.name, None),
             max_tokens=8192,
@@ -1835,27 +1860,44 @@ async def llm_infographic(
 
     advice = out["infographic"]
 
-    # Render infografis 2-kolom.
-    meta = {
-        "project_name": (project_name or "").strip(),
-        "photo_id": (photo_id or "").strip(),
-        "location": loc,
-        "city": city_val or "",
-        "urban_character": str(advice.get("urban_character") or ""),
-        "heritage_status": str(advice.get("heritage_status") or ""),
-    }
-    uvi = perc.get("uvi_score")
+    # Infografis AI: gpt-image-1.5 edit dari foto AFTER + prompt poster pendek.
     stem = _target_stem({"result_path": str(after_path)}, str(after_path))
-    info_path = output_path(INFOGRAPHICS_DIR, "infographic_", stem, ".png")
-    infographic_mod.render_infographic_png(
-        photo_path=after_path, advice=advice, meta=meta,
-        uvi_score=float(uvi) if isinstance(uvi, (int, float)) else None,
-        out_path=info_path,
+    uvi = perc.get("uvi_score")
+    uvi_val = float(uvi) if isinstance(uvi, (int, float)) else None
+    image_prompt = infographic_mod.build_infographic_image_prompt(
+        advice=advice, metrics=seg, uvi_score=uvi_val,
+        project_name=project_name, photo_id=photo_id, location=loc,
+        city=city_val, lat=lat, lon=lon,
+        urban_character=urban_character, heritage_status=heritage_status,
     )
+    info_path = None
+    try:
+        gen_info = await _openai_edit_image(
+            image_path=after_path, prompt=image_prompt,
+            model=settings.openai_image_model, size="1536x1024", count=1,
+        )
+        info_path = output_path(INFOGRAPHICS_DIR, "infographic_", stem, ".png")
+        info_path.write_bytes(base64.b64decode(gen_info["items"][0]["b64_json"]))
+    except HTTPException as exc:
+        # Fallback: render Pillow supaya tetap ada PNG walau AI gagal.
+        logger.warning("Gagal generate infografis AI (%s) - fallback Pillow", exc.detail)
+        meta = {
+            "project_name": (project_name or "").strip(),
+            "photo_id": (photo_id or "").strip(),
+            "location": loc,
+            "city": city_val or "",
+            "urban_character": str(advice.get("urban_character") or ""),
+            "heritage_status": str(advice.get("heritage_status") or ""),
+        }
+        info_path = output_path(INFOGRAPHICS_DIR, "infographic_", stem, ".png")
+        infographic_mod.render_infographic_png(
+            photo_path=after_path, advice=advice, meta=meta,
+            uvi_score=uvi_val, out_path=info_path,
+        )
 
     return {
         "generated_image_url": upload_url(after_path),
-        "infographic_url": upload_url(info_path),
+        "infographic_url": upload_url(info_path) if info_path else None,
         "infographic": advice,
         "raw_image_url": upload_url(before_path),
         "model": out.get("model_used"),

@@ -128,6 +128,85 @@ def infographic_schema_ok(obj: Mapping[str, Any]) -> tuple[bool, str]:
     return True, ""
 
 
+def build_infographic_image_prompt(*, advice: Mapping[str, Any],
+                                    metrics: Mapping[str, Any],
+                                    uvi_score: Optional[float],
+                                    project_name: Optional[str],
+                                    photo_id: Optional[str],
+                                    location: Optional[str],
+                                    city: Optional[str],
+                                    lat: Optional[float],
+                                    lon: Optional[float],
+                                    urban_character: Optional[str],
+                                    heritage_status: Optional[str]) -> str:
+    """Prompt gambar (gpt-image-1.5) mengikuti master prompt UVI infografis.
+
+    Struktur, warna, dan panel mengikuti master prompt "UVI – REGULATION-AWARE
+    AI URBAN DESIGN ENHANCEMENT"; data aktual (foto, UVI, 5 indikator, 10
+    intervensi, regulasi) diisi dari hasil LLM.
+    """
+    uvi_10 = (uvi_score * 10.0) if isinstance(uvi_score, (int, float)) else None
+    interventions = advice.get("interventions") or {}
+    reg = advice.get("regulatory_assessment") or []
+    diagnosis = str(advice.get("diagnosis") or "")[:400]
+
+    lines = [
+        "Create a highly detailed, professional, research-oriented urban planning infographic dashboard.",
+        "Landscape 3:2, 1536x1024, dense multi-panel layout, architectural competition board style.",
+        "Colors: dark navy #10345B, medium blue #1E5B91, light blue #EAF3FC, white, soft green #DDF2DF, neutral grey #E7E9EC.",
+        "Modern sans-serif typography; titles bold uppercase navy; panel headers dark navy with white bold text.",
+        "Thin grey separators, subtle rounded corners, consistent margins; no gradients, neon, or cartoon.",
+        "",
+        "TOP: full-width dark navy header, title 'UVI - REGULATION-AWARE AI URBAN DESIGN ENHANCEMENT',",
+        "subtitle 'Simulasi Peningkatan Kualitas Visual Ruang Perkotaan Berbasis Urban Visual Index (UVI)'.",
+        "",
+        "MIDDLE LEFT (60%): keep this provided street photo as the large photorealistic main visualization, do not redraw it.",
+        f"MIDDLE RIGHT (40%): vertical panel header 'DESIGN INTERVENTIONS BERDASARKAN 5 INDIKATOR UVI' with 5 horizontal sections, each with a colored icon, bold numbered title, and two concise recommendations:",
+    ]
+    for idx, (key, label, src) in enumerate(UVI_INDICATORS, 1):
+        items = interventions.get(key) or []
+        recs = " / ".join(str(i.get("proposed_intervention") or "").strip() for i in items[:2])
+        val = metrics.get(src)
+        val_txt = f" ({val:.1f}%)" if isinstance(val, (int, float)) else ""
+        lines.append(f"  {idx:02d} {label}{val_txt}: {recs or 'tanpa intervensi besar'}")
+
+    lines += [
+        "",
+        "BOTTOM LEFT: navy panel header 'INFORMASI FOTO & UVI' with a small table:",
+        f"  ID Foto: {photo_id or 'SST'}; Lokasi: {location or 'Koridor Komersial Malang'};",
+        f"  Koordinat: Lat {lat:.6f} Long {lon:.6f}" if lat is not None else "  Koordinat: -",
+        f"  Karakter: {urban_character or advice.get('urban_character') or 'Komersial'}; Heritage: {heritage_status or advice.get('heritage_status') or 'perlu verifikasi'}",
+        f"  Two score cards: 'UVI Eksisting' dark blue box {uvi_10:.1f} and 'Target UVI' green box >= 9.0" if uvi_10 is not None else "  Two score cards: 'UVI Eksisting' dan 'Target UVI >= 9.0'",
+        "",
+        "BOTTOM CENTER: panel 'DIAGNOSIS SINGKAT & PRIORITAS' split into two columns: left red/pink 'Kondisi Utama (Sebelum)' with the diagnosis bullet points, right light green 'Prioritas Intervensi' with green checkmarks.",
+        f"  Diagnosis content: {diagnosis}",
+        "",
+        "BOTTOM RIGHT: panel 'ASESMEN REGULASI & TEKNIS (RINGKAS)' with a table (Aspek | Status | Catatan):",
+    ]
+    aspect_map = {
+        "building": "Bangunan Gedung", "spatial_planning": "Tata Ruang (RTRW/RDTR)",
+        "pedestrian_accessibility": "Pedestrian & Aksesibilitas", "heritage_conservation": "Konservasi Heritage",
+        "landscape_environment": "Lingkungan & Lanskap", "road_safety": "Keselamatan Lalu Lintas",
+    }
+    for r in reg:
+        aspect = aspect_map.get(str(r.get("aspect") or ""), str(r.get("aspect") or "").replace("_", " ").title())
+        status = str(r.get("status") or "")
+        note = str(r.get("note") or "")[:80]
+        lines.append(f"  {aspect} | {status} | {note}")
+    if not reg:
+        lines.append("  (status preliminary, bukan sertifikasi legal)")
+
+    lines += [
+        "",
+        "FOOTER: light blue strip 'Rekomendasi Validasi Ilmiah' (semantic segmentation before/after, hitung ulang 5 indikator UVI, bandingkan, validasi ahli, uji persepsi publik).",
+        "Light beige disclaimer box 'Catatan: gambar simulasi AI, bukan kondisi eksisting; kesesuaian regulasi perlu verifikasi lapangan.'",
+        "",
+        "Preserve all 5 UVI indicators, the UVI score, all recommendations, and regulatory statuses.",
+        "Indonesian text spelled correctly. Do not invent data. Keep the provided photo unchanged as the main visual.",
+    ]
+    return "\n".join(lines)
+
+
 def build_infographic_prompt(*, metrics: Mapping[str, Any],
                              scores: Mapping[str, Any],
                              project_name: Optional[str],
